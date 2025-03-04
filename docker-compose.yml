@@ -1,0 +1,22 @@
+version: '3'
+services:
+  postgres:
+    image: postgres:16.3
+    environment:
+      POSTGRES_USER: group6
+      POSTGRES_PASSWORD: group6
+      POSTGRES_DB: group6
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./volumes/pg:/home/group6
+  airflow:
+    build: Dockerfile.af
+    container_name: airflow_standalone
+    command: ["airflow", "standalone"]
+    ports:
+      - "8080:8080"  
+    environment:
+      AIRFLOW_UID: 50000
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags  
