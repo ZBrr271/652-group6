@@ -7,16 +7,30 @@ services:
       POSTGRES_PASSWORD: group6
       POSTGRES_DB: group6
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - ./volumes/pg:/home/group6
   airflow:
-    build: Dockerfile.af
+    build:
+      context: .
+      dockerfile: Dockerfile.af
     container_name: airflow_standalone
     command: ["airflow", "standalone"]
     ports:
-      - "8080:8080"  
+      - "8081:8080"  
     environment:
       AIRFLOW_UID: 50000
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: "group6"
+      _AIRFLOW_WWW_USER_PASSWORD: "group6"
     volumes:
-      - ./airflow/dags:/opt/airflow/dags  
+      - ./airflow:/opt/airflow  
+  flask_api:
+    build:
+      context: .
+      dockerfile: Dockerfile.flask
+    container_name: flask_api
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./flask_api:/app
