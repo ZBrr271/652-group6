@@ -1,6 +1,7 @@
 # Ignore 
 /airflow/*
 *.pyc
+volumes/
 
 # But keep these
 !/airflow/standalone_admin_password.txt
