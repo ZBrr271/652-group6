@@ -22,6 +22,7 @@ data = {
     "grant_type": "client_credentials"
 }
 
+# Random comment
 # Send POST request
 response = requests.post("https://accounts.spotify.com/api/token", headers=headers1, data=data)
 
