@@ -6,3 +6,5 @@ volumes/
 # But keep these
 !/airflow/standalone_admin_password.txt
 !/airflow/dags
+
+notebooks/data/brainz/
