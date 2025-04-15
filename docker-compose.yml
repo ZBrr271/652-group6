@@ -1,30 +1,67 @@
 version: '3'
+
+x-common-env: &airflow-common-env
+  - AIRFLOW_HOME=/home/jhu/airflow
+  - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+  - AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS=False
+  - AIRFLOW__CORE__LOAD_EXAMPLES=False
+  - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
+  - AIRFLOW__CORE__TEST_CONNECTION=Enabled
+  - AIRFLOW__CORE__DAGS_FOLDER=/home/jhu/airflow/dags
+
 services:
   postgres:
     image: postgres:16.3
     environment:
-      POSTGRES_USER: group6
-      POSTGRES_PASSWORD: group6
-      POSTGRES_DB: group6
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
-      - ./volumes/pg:/home/group6
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.af
+    volumes:
+      - ./airflow:/home/jhu/airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *airflow-common-env
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create -r Admin -u group6 -p group6 -e group6@jh.edu -f Admin -l User &&
+      airflow connections add 'pg_group6' --conn-type 'postgres' --conn-login 'group6' --conn-password 'group6' --conn-host 'postgres' --conn-port '5432' --conn-schema 'group6' &&
+      airflow variables import /home/jhu/airflow/variables.json"
+
   airflow:
     build:
       context: .
       dockerfile: Dockerfile.af
-    container_name: airflow_standalone
-    command: ["airflow", "standalone"]
     ports:
-      - "8081:8080"  
-    environment:
-      AIRFLOW_UID: 50000
-      _AIRFLOW_WWW_USER_CREATE: "true"
-      _AIRFLOW_WWW_USER_USERNAME: "group6"
-      _AIRFLOW_WWW_USER_PASSWORD: "group6"
+      - "8081:8080"
     volumes:
-      - ./airflow:/opt/airflow  
+      - ./airflow:/home/jhu/airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    command: >
+      bash -c "
+      mkdir -p /home/jhu/airflow/dags &&
+      airflow webserver & airflow scheduler"
+
   flask_api:
     build:
       context: .
@@ -34,3 +71,6 @@ services:
       - "5001:5001"
     volumes:
       - ./flask_api:/app
+
+volumes:
+  postgres_data:

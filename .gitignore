@@ -4,7 +4,7 @@
 volumes/
 
 # But keep these
-!/airflow/standalone_admin_password.txt
 !/airflow/dags
+!/airflow/variables.json
 
 notebooks/data/brainz/

@@ -1,3 +1,40 @@
-FROM apache/airflow:2.6.1
-COPY requirements.txt /requirements.txt
-RUN pip install --no-cache-dir -r /requirements.txt
+FROM ubuntu:22.04
+
+# Set environment variables
+ENV AIRFLOW_HOME=/home/jhu/airflow
+
+# Install necessary system packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    python3-dev \
+    postgresql-client \
+    python3-pip \
+    cron \
+    vim \
+    nano \
+    sudo && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd -ms /bin/bash group6 && \
+    echo "group6:group6" | chpasswd && \
+    usermod -aG sudo group6   # Add jhu user to sudo group
+
+# Install Airflow and psycopg2
+RUN pip install apache-airflow==2.8.4 \
+    apache-airflow-providers-postgres \
+    psycopg2-binary \
+    wtforms==2.3.3 \
+    pandas \
+    numpy \
+    requests
+
+# Set up directories for Airflow
+RUN mkdir -p $AIRFLOW_HOME $AIRFLOW_HOME/dags && \
+    chown -R group6:group6 $AIRFLOW_HOME
+
+# Set the working directory
+WORKDIR $AIRFLOW_HOME
