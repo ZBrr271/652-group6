@@ -1,4 +1,4 @@
-# Data Engineering Pipeline
+# 652-group6
 
 A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API. Currently configured to collect music data from LastFM's API.
 
