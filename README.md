@@ -118,8 +118,8 @@ docker-compose up --build -d
      - Databases: 
        - `airflow`: Airflow metadata
        - `group6`: Pipeline data
-     - Username: group6
-     - Password: group6
+     - Username: group6 or airflow
+     - Password: group6 or airlow
 
 4. Shutdown:
 ```bash
