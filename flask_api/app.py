@@ -3,7 +3,6 @@ import psycopg2
 
 app = Flask(__name__)
 
-# Database connection config
 DB_CONFIG = {
     "host": "localhost",
     "dbname": "your_db",
