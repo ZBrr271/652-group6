@@ -10,6 +10,16 @@ import zipfile
 import subprocess
 import pandas as pd
 
+default_args = {
+    'owner': 'airflow',
+    'depends_on_past': False,
+    'start_date': datetime(2024, 1, 1),
+    'email_on_failure': False,
+    'email_on_retry': False,
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+}
+
 
 # Retrieves a specific file from kaggle via API
 def get_kag_file():
@@ -191,15 +201,6 @@ def load_billboard_data():
                 print(f"Saved tracks for {tag}")
 
 
-default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'start_date': datetime(2024, 1, 1),
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
-}
 
 with DAG(
         'kaggle_dag',

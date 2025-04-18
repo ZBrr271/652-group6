@@ -4,5 +4,8 @@
     "AB_BASE_URL":"https://acousticbrainz.org",
     "MB_BASE_URL":"https://musicbrainz.org/ws/2",
     "KAG_USERNAME":"zmbarrett",
-    "KAG_KEY":"eca1fde2463f087bbeea1ee3b57d4400"
+    "KAG_KEY":"eca1fde2463f087bbeea1ee3b57d4400",
+    "SPOTIFY_CLIENT_ID":"d2d5bf12b79f4947be8568a2a4105a93",
+    "SPOTIFY_CLIENT_SECRET":"61ec80164ca14449a0588e4e64330fda",
+    "AB_API_KEY":"W58BMbyL0v2YyL5R9ek7NJFTXvgieHRZtO6ehFUi"
 }

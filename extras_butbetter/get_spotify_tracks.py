@@ -9,7 +9,6 @@ from urllib.parse import urlencode
 import time
 import pandas as pd
 from datetime import datetime
-from tabulate import tabulate
 import os
 
 
@@ -172,7 +171,7 @@ def parse_spotify_tracks(spot_tracks):
             track_details['album_release_date_precision'] = None
             track_details["album_image"] = None
 
-        track_details["explicit"] = track.get("explicit", None)
+        track_details["explicit_lyrics"] = track.get("explicit", None)
         track_details["isrc"] = track.get("external_ids", {}).get("isrc", None)
         track_details["spotify_url"] = track.get("external_urls", {}).get("spotify", None)
         track_details["available_markets"] = ", ".join(track.get("available_markets", None))
