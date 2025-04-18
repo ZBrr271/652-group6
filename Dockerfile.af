@@ -30,7 +30,9 @@ RUN pip install apache-airflow==2.8.4 \
     wtforms==2.3.3 \
     pandas \
     numpy \
-    requests
+    requests \
+    kaggle \
+    fuzzywuzzy
 
 # Set up directories for Airflow
 RUN mkdir -p $AIRFLOW_HOME $AIRFLOW_HOME/dags && \

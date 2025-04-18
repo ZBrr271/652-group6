@@ -1,4 +1,6 @@
 {
     "LASTFM_API_KEY":"f35ca57df799d71fa75bcaeb13322fb6",
-    "LASTFM_BASE_URL":"http://ws.audioscrobbler.com/2.0/"
+    "LASTFM_BASE_URL":"http://ws.audioscrobbler.com/2.0/",
+    "KAG_USERNAME":"zmbarrett",
+    "KAG_KEY":"eca1fde2463f087bbeea1ee3b57d4400"
 }
