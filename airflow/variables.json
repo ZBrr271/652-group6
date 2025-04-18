@@ -1,4 +1,6 @@
 {
     "LASTFM_API_KEY":"f35ca57df799d71fa75bcaeb13322fb6",
-    "LASTFM_BASE_URL":"http://ws.audioscrobbler.com/2.0/"
+    "LASTFM_BASE_URL":"http://ws.audioscrobbler.com/2.0/",
+    "AB_BASE_URL":"https://acousticbrainz.org",
+    "MB_BASE_URL":"https://musicbrainz.org/ws/2"
 }
