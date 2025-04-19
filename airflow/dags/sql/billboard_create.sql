@@ -7,5 +7,6 @@ CREATE TABLE billboard_chart_data (
     peak_chart_pos INT,
     last_chart_pos INT,
     total_wks_on_chart INT,
+    wk_first_charted DATE,
     wk_last_charted DATE
 );
