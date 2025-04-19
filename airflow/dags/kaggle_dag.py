@@ -97,8 +97,8 @@ def process_kag_file(file_name):
     df_kaggle = df.copy()
 
     # Replace some strings to help with matching to Spotify data
-    df_kaggle['performer'] = df_kaggle['performer'].str.replace(r' \(featuring ([^)]*)\)', r', \1', regex=True)
-    df_kaggle['performer'] = df_kaggle['performer'].str.replace(r' \(feat. ([^)]*)\)', r', \1', regex=True)
+    df_kaggle['performer'] = df_kaggle['performer'].str.replace(r' \(featuring ([^)]*)\)', r',\1', regex=True)
+    df_kaggle['performer'] = df_kaggle['performer'].str.replace(r' \(feat. ([^)]*)\)', r',\1', regex=True)
     df_kaggle['performer'] = df_kaggle['performer'].str.replace('featuring', ',')
     df_kaggle['performer'] = df_kaggle['performer'].str.replace('feat.', ',')
     df_kaggle['performer'] = df_kaggle['performer'].str.replace('&', 'and')
@@ -185,20 +185,6 @@ def load_billboard_data():
                             row['last_chart_pos'], 
                             row['total_wks_on_chart'], 
                             row['wk_last_charted']))
-
-
-
-                for index, row in tracks_df.iterrows():
-                    cur.execute("""INSERT INTO lastfm_top_tag_tracks (track_name, track_mbid, artist_name, artist_mbid, tag, rank) 
-                                VALUES (%s, %s, %s, %s, %s, %s)""", 
-                                    (row['track_name'], 
-                                     row['track_mbid'], 
-                                     row['artist_name'], 
-                                     row['artist_mbid'], 
-                                     row['tag'], 
-                                     row['rank']))
-                conn.commit()
-                print(f"Saved tracks for {tag}")
 
 
 
