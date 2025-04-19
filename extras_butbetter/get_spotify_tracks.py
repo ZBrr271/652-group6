@@ -10,7 +10,7 @@ import time
 import pandas as pd
 from datetime import datetime
 import os
-
+import unicodedata
 
 data_dir = os.path.join(os.getcwd(), 'data')
 os.makedirs(data_dir, exist_ok=True)
@@ -182,6 +182,8 @@ def parse_spotify_tracks(spot_tracks):
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     spot_tracks_file_name = f"spotify_tracks_{timestamp}.csv"
+    data_dir = os.path.join(os.getcwd(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
     spot_tracks_file_path = os.path.join(data_dir, spot_tracks_file_name)
     df.to_csv(spot_tracks_file_path, index=False, encoding='utf-8-sig')
     print(f"Successfully wrote to {spot_tracks_file_name}\n")
@@ -197,6 +199,12 @@ def convert_date(date_str):
         return pd.to_datetime(f"01/01/{date_str}", errors='coerce')
     return pd.to_datetime(date_str, errors='coerce')
 
+# Function to replace accented characters
+def replace_accented_characters(s):
+    if isinstance(s, str):  # Check if the value is a string
+        normalized_string = unicodedata.normalize('NFD', s)
+        return ''.join(c for c in normalized_string if unicodedata.category(c) != 'Mn')
+    return s 
 
 
 
@@ -220,6 +228,7 @@ def clean_spotify_tracks(df):
     for col in cols_to_clean:
         if col in spot_df.columns:
             spot_df[col] = spot_df[col].str.lower().str.strip()
+            spot_df[col] = spot_df[col].apply(replace_accented_characters)
 
     # Make sure integer columns are ints
     int_columns = ['duration', 'popularity']    
@@ -313,6 +322,8 @@ def clean_spotify_tracks(df):
     # Write to CSV for record
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     spot_clean_file_name = f"spotify_tracks_cleaned_{timestamp}.csv"
+    data_dir = os.path.join(os.getcwd(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
     spot_clean_file_path = os.path.join(data_dir, spot_clean_file_name)
     spot_df.to_csv(spot_clean_file_path, index=False, encoding='utf-8-sig')
     print(f"Successfully processed Spotify tracks...")

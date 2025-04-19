@@ -12,6 +12,7 @@ import time
 import pandas as pd
 from datetime import datetime
 import os
+import unicodedata
 
 
 default_args = {
@@ -215,6 +216,14 @@ def convert_date(date_str):
     return pd.to_datetime(date_str, errors='coerce')
 
 
+# Function to replace accented characters
+def replace_accented_characters(s):
+    if isinstance(s, str):  # Check if the value is a string
+        normalized_string = unicodedata.normalize('NFD', s)
+        return ''.join(c for c in normalized_string if unicodedata.category(c) != 'Mn')
+    return s 
+
+
 
 # Further clean the spotify tracks dataframe
 def clean_spotify_tracks(df):
@@ -236,6 +245,7 @@ def clean_spotify_tracks(df):
     for col in cols_to_clean:
         if col in spot_df.columns:
             spot_df[col] = spot_df[col].str.lower().str.strip()
+            spot_df[col] = spot_df[col].apply(replace_accented_characters)
 
     # Make sure integer columns are ints
     int_columns = ['duration', 'popularity']    
@@ -375,7 +385,7 @@ def load_spotify_data():
                 print(f"Saved track {row['song_name']} by {row['top_artist']}")
 
                 conn.commit()
-                print(f"Saved all Spotify tracks")
+            print(f"Saved all Spotify tracks")
 
 
 with DAG(
