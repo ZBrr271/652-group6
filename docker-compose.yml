@@ -3,11 +3,15 @@ version: '3'
 x-common-env: &airflow-common-env
   - AIRFLOW_HOME=/home/jhu/airflow
   - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+  - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
   - AIRFLOW__CORE__LOAD_DEFAULT_CONNECTIONS=False
   - AIRFLOW__CORE__LOAD_EXAMPLES=False
   - AIRFLOW__WEBSERVER__EXPOSE_CONFIG=True
   - AIRFLOW__CORE__TEST_CONNECTION=Enabled
   - AIRFLOW__CORE__DAGS_FOLDER=/home/jhu/airflow/dags
+  - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://airflow:airflow@postgres:5432/airflow
+  - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+  - AIRFLOW__CELERY__WORKER_CONCURRENCY=8
 
 services:
   postgres:
@@ -26,6 +30,16 @@ services:
       interval: 5s
       retries: 5
 
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 30s
+      retries: 50
+
   airflow-init:
     build:
       context: .
@@ -34,6 +48,8 @@ services:
       - ./airflow:/home/jhu/airflow
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment: *airflow-common-env
     command: >
@@ -54,6 +70,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
     environment: *airflow-common-env
@@ -64,6 +82,22 @@ services:
       mkdir -p /home/jhu/airflow/dags &&
       airflow webserver & airflow scheduler"
 
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.af
+    volumes:
+      - ./airflow:/home/jhu/airflow
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+    environment: *airflow-common-env
+    command: airflow celery worker
+    
   flask_api:
     build:
       context: .

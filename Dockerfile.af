@@ -24,7 +24,7 @@ RUN useradd -ms /bin/bash group6 && \
     usermod -aG sudo group6   # Add jhu user to sudo group
 
 # Install Airflow and psycopg2
-RUN pip install apache-airflow==2.8.4 \
+RUN pip install apache-airflow[celery]==2.8.4 \
     apache-airflow-providers-postgres \
     psycopg2-binary \
     wtforms==2.3.3 \

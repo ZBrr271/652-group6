@@ -22,7 +22,7 @@ default_args = {
 }
 
 MAX_TAGS = 50
-TRACKS_PER_TAG = 10
+TRACKS_PER_TAG = 100
 HEADERS = {"User-Agent": "JHU-Project/1.0 (spalit2@jh.edu)"}
 api_key = Variable.get("LASTFM_API_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
