@@ -9,6 +9,8 @@ import requests
 import time
 import json
 from datetime import datetime, timedelta
+import os
+
 
 default_args = {
     'owner': 'airflow',
@@ -215,6 +217,16 @@ def process_lastfm_tracks(all_tracks_details):
         df_lastfm_tracks[col] = df_lastfm_tracks[col].astype('Int64')
 
     print(f"Processed and cleaned {len(df_lastfm_tracks)} tracks")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    data_dir = os.path.join(os.getcwd(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    lastfm_clean_file_name = f"lastfm_clean_{timestamp}.csv"
+    lastfm_clean_file_path = os.path.join(data_dir, lastfm_clean_file_name)
+    df_lastfm_tracks.to_csv(lastfm_clean_file_path, index=False, encoding='utf-8-sig')
+    print(f"Successfully processed Last.fm tracks...")
+    print(f"Successfully wrote record to {lastfm_clean_file_name}\n")
+
     return df_lastfm_tracks
 
 
@@ -239,7 +251,7 @@ def get_and_load_lastfm_tracks():
                              row['tag_ranks'], row['toptags'], row['wiki_summary']))
             conn.commit()
             print(f"Saved {len(df_lastfm_tracks)} tracks to postgres")
-    
+
     return    
 
 
