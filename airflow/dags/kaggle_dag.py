@@ -102,6 +102,7 @@ def process_kag_file(file_name):
     df_kaggle['performer'] = df_kaggle['performer'].str.replace('featuring', ',')
     df_kaggle['performer'] = df_kaggle['performer'].str.replace('feat.', ',')
     df_kaggle['performer'] = df_kaggle['performer'].str.replace('&', 'and')
+    df_kaggle['performer'] = df_kaggle['performer'].str.replace(r' ,', r',', regex=True)
     df_kaggle['title'] = df_kaggle['title'].str.replace(r' \(featuring.*$', '', regex=True)
 
     # Force int columns to numeric, force any NaNs to None
