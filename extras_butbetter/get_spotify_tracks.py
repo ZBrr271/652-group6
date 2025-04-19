@@ -189,6 +189,17 @@ def parse_spotify_tracks(spot_tracks):
     return df
 
 
+def convert_date(date_str):
+    if pd.isna(date_str):
+        return None
+    date_str = str(date_str).strip()
+    if len(date_str) == 4 and date_str.isdigit():
+        return pd.to_datetime(f"01/01/{date_str}", errors='coerce')
+    return pd.to_datetime(date_str, errors='coerce')
+
+
+
+
 # Further clean the spotify tracks dataframe
 def clean_spotify_tracks(df):
     print(f"Cleaning Spotify data...\n")
@@ -229,6 +240,8 @@ def clean_spotify_tracks(df):
 
     # Delete if no artist
     spot_df = spot_df[spot_df['artists'].notna() & (spot_df['artists'] != '')] # Delete if no artist
+
+    spot_df['album_release_date'] = spot_df['album_release_date'].apply(convert_date)
     
     # Checking for any artists, song_name duplicates
     print("Checking for any duplicates by top_artist and song_name...")

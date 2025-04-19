@@ -59,6 +59,8 @@ services:
     environment: *airflow-common-env
     command: >
       bash -c "
+      rm -f /home/jhu/airflow/airflow-webserver.pid &&
+      rm -f /home/jhu/airflow/airflow-scheduler.pid &&
       mkdir -p /home/jhu/airflow/dags &&
       airflow webserver & airflow scheduler"
 
