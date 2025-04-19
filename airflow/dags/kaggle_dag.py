@@ -121,30 +121,32 @@ def process_kag_file(file_name):
 
     print(f"Number of Kaggle dataset rows before removing duplicates: {len(df_kaggle)}")
 
-    # Sort and remove duplicates, by equal performer and title
-    # Keep most recent occurrence
-    df_kaggle = df_kaggle.sort_values(by=['performer', 'title', 'chart_week'], 
-                                ascending=[True, True, False]).reset_index(drop=True)
-
-    df_kaggle = df_kaggle.drop_duplicates(subset=['title', 'performer'], 
-                                          keep='first').reset_index(drop=True)
+    # First, group by performer and title to find first and last chart dates
+    date_groups = df_kaggle.groupby(['performer', 'title']).agg({
+        'chart_week': ['min', 'max'],  # Get both first and last dates
+        'current_week': 'last',  # Keep values from the most recent entry
+        'peak_pos': 'min',      # Always keep lowest (best) peak position
+        'wks_on_chart': 'max'   # Keep highest weeks on chart value
+    })
+    
+    # Flatten MultiIndex columns
+    date_groups.columns = ['wk_first_charted', 'wk_last_charted', 'last_chart_pos', 
+                           'peak_chart_pos', 'total_wks_on_chart']
+    date_groups = date_groups.reset_index()
+    
+    # Convert back to the original dataframe format with the additional column
+    df_kaggle = date_groups.copy()
 
     print(f"Number of Kaggle dataset rows after removing duplicates: {len(df_kaggle)}\n")
 
-    # This col not needed
-    df_kaggle.drop(columns=['last_week'], inplace=True)
-
     # Rename columns
-    df_kaggle.rename(columns={'chart_week': 'wk_last_charted',
-                           'current_week': 'last_chart_pos',
-                           'peak_pos': 'peak_chart_pos',
-                           'wks_on_chart': 'total_wks_on_chart',
-                           'performer': 'artists',
+    df_kaggle.rename(columns={'performer': 'artists',
                            'title': 'song_name'}, inplace=True)
     
     # Reorder columns
     df_kaggle = df_kaggle[['artists', 'song_name', 'peak_chart_pos',
-                           'last_chart_pos', 'total_wks_on_chart', 'wk_last_charted']]
+                           'last_chart_pos', 'total_wks_on_chart', 
+                           'wk_first_charted', 'wk_last_charted']]
 
 
     # Write to CSV for record
@@ -178,13 +180,14 @@ def load_billboard_data():
         with conn.cursor() as cur:
             for index, row in df_kaggle.iterrows():
                 cur.execute("""INSERT INTO billboard_chart_data (artists, song_name, peak_chart_pos, 
-                            last_chart_pos, total_wks_on_chart, wk_last_charted) 
-                            VALUES (%s, %s, %s, %s, %s, %s)""", 
+                            last_chart_pos, total_wks_on_chart, wk_first_charted, wk_last_charted) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s)""", 
                             (row['artists'], 
                             row['song_name'], 
                             row['peak_chart_pos'], 
                             row['last_chart_pos'], 
                             row['total_wks_on_chart'], 
+                            row['wk_first_charted'],
                             row['wk_last_charted']))
 
 
