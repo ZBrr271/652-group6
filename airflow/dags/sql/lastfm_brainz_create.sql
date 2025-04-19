@@ -1,5 +1,5 @@
 -- drop all tables if they exist
-DROP TABLE IF EXISTS lastfm_top_tag_tracks;
+DROP TABLE IF EXISTS lastfm_tracks;
 DROP TABLE IF EXISTS acousticbrainz_features;
 DROP TABLE IF EXISTS lastfm_top_tags;
 
@@ -33,14 +33,17 @@ CREATE TABLE acousticbrainz_features (
 
 -- create table for lastfm tag tracks
 -- contains nulls for some track_mbid, so we can't use it as a primary key
-CREATE TABLE lastfm_top_tag_tracks (
-    track_name VARCHAR(255),
-    track_mbid VARCHAR(255),
-    artist_name VARCHAR(255),
-    artist_mbid VARCHAR(255),
-    tag_name VARCHAR(255),
-    tag_rank INT,
-    PRIMARY KEY (track_name, artist_name, tag_name),
-    CONSTRAINT fk_tag_name FOREIGN KEY (tag_name) REFERENCES lastfm_top_tags(tag_name)
+CREATE TABLE lastfm_tracks (
+    artist VARCHAR(255),
+    song_name VARCHAR(255),
+    duration INT,
+    listeners INT,
+    playcount INT,
+    mbid VARCHAR(255) NOT NULL,
+    album_name VARCHAR(255),
+    url VARCHAR(255),
+    tag_ranks JSONB,
+    toptags TEXT[],
+    wiki_summary TEXT
 );
 
