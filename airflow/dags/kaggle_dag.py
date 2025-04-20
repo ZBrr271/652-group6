@@ -9,6 +9,7 @@ import os
 import zipfile
 import subprocess
 import pandas as pd
+import uuid
 
 default_args = {
     'owner': 'group6',
@@ -105,6 +106,9 @@ def process_kag_file(file_name):
     df_kaggle['performer'] = df_kaggle['performer'].str.replace(r' ,', r',', regex=True)
     df_kaggle['title'] = df_kaggle['title'].str.replace(r' \(featuring.*$', '', regex=True)
 
+    df_kaggle['top_artist'] = df_kaggle['performer'].str.split(',').str[0]
+    df_kaggle['performer'] = df_kaggle['performer'].str.split(',')
+
     # Force int columns to numeric, force any NaNs to None
     int_columns = ['current_week', 'last_week', 'peak_pos', 'wks_on_chart']
     for col in int_columns:
@@ -121,30 +125,34 @@ def process_kag_file(file_name):
 
     print(f"Number of Kaggle dataset rows before removing duplicates: {len(df_kaggle)}")
 
-    # First, group by performer and title to find first and last chart dates
-    date_groups = df_kaggle.groupby(['performer', 'title']).agg({
-        'chart_week': ['min', 'max'],  # Get both first and last dates
-        'current_week': 'last',  # Keep values from the most recent entry
-        'peak_pos': 'min',      # Always keep lowest (best) peak position
-        'wks_on_chart': 'max'   # Keep highest weeks on chart value
-    })
-    
-    # Flatten MultiIndex columns
-    date_groups.columns = ['wk_first_charted', 'wk_last_charted', 'last_chart_pos', 
-                           'peak_chart_pos', 'total_wks_on_chart']
-    date_groups = date_groups.reset_index()
-    
-    # Convert back to the original dataframe format with the additional column
-    df_kaggle = date_groups.copy()
+    # Group by top_artist and title, aggregate, and keep the first 'performer' value
+    date_groups = df_kaggle.groupby(['top_artist', 'title']).agg(
+        performer=('performer', 'first'),           # Keep the first performer string
+        chart_week_min=('chart_week', 'min'),      # Rename agg results directly
+        chart_week_max=('chart_week', 'max'),
+        current_week=('current_week', 'last'),
+        peak_pos=('peak_pos', 'min'),
+        wks_on_chart=('wks_on_chart', 'max')
+    ).reset_index() # Makes 'top_artist' and 'title' columns again
+
+    # Rename the columns after aggregation
+    date_groups.rename(columns={
+        'performer': 'artists',            # Now rename the carried-over performer
+        'title': 'song_name',              # Rename title
+        'chart_week_min': 'wk_first_charted',
+        'chart_week_max': 'wk_last_charted',
+        'current_week': 'last_chart_pos',
+        'peak_pos': 'peak_chart_pos',
+        'wks_on_chart': 'total_wks_on_chart'
+    }, inplace=True)
+
+    # Assign the correctly aggregated and renamed DataFrame back
+    df_kaggle = date_groups
 
     print(f"Number of Kaggle dataset rows after removing duplicates: {len(df_kaggle)}\n")
 
-    # Rename columns
-    df_kaggle.rename(columns={'performer': 'artists',
-                           'title': 'song_name'}, inplace=True)
-    
-    # Reorder columns
-    df_kaggle = df_kaggle[['artists', 'song_name', 'peak_chart_pos',
+    # This column reordering should now work
+    df_kaggle = df_kaggle[['top_artist', 'artists', 'song_name', 'peak_chart_pos',
                            'last_chart_pos', 'total_wks_on_chart', 
                            'wk_first_charted', 'wk_last_charted']]
 
@@ -179,10 +187,14 @@ def load_billboard_data():
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             for index, row in df_kaggle.iterrows():
-                cur.execute("""INSERT INTO billboard_chart_data (artists, song_name, peak_chart_pos, 
+                group6_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['top_artist'].strip()))
+                
+                cur.execute("""INSERT INTO billboard_chart_data (group6_id, top_artist, artists, song_name, peak_chart_pos, 
                             last_chart_pos, total_wks_on_chart, wk_first_charted, wk_last_charted) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)""", 
-                            (row['artists'], 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                            (group6_id,
+                            row['top_artist'],
+                            row['artists'], 
                             row['song_name'], 
                             row['peak_chart_pos'], 
                             row['last_chart_pos'], 

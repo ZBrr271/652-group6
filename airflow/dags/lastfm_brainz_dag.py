@@ -10,6 +10,7 @@ import time
 import json
 from datetime import datetime, timedelta
 import os
+import uuid
 
 
 default_args = {
@@ -21,8 +22,8 @@ default_args = {
     'retries': None
 }
 
-MAX_TAGS = 50
-TRACKS_PER_TAG = 100
+MAX_TAGS = 20
+TRACKS_PER_TAG = 250
 HEADERS = {"User-Agent": "JHU-Project/1.0 (spalit2@jh.edu)"}
 api_key = Variable.get("LASTFM_API_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
@@ -38,7 +39,7 @@ def get_top_tags():
     params = {
         "method": "tag.getTopTags",
         "api_key": api_key,
-        "format": "json",
+        "format": "json"
     }
 
     # call lastfm api
@@ -240,16 +241,21 @@ def get_and_load_lastfm_tracks():
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             for index, row in df_lastfm_tracks.iterrows():
-                cur.execute("""INSERT INTO lastfm_tracks (artist, song_name, duration, listeners, 
+                # Generate group6_id
+                group6_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['artist'].strip())))
+                
+                cur.execute("""INSERT INTO lastfm_tracks (group6_id, artist, song_name, duration, listeners, 
                             playcount, mbid, album_name, url, tag_ranks, toptags, wiki_summary) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
-                            (row['artist'], row['song_name'], row['duration'], row['listeners'], 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING""", 
+                            (group6_id,
+                             row['artist'], row['song_name'], row['duration'], row['listeners'], 
                              row['playcount'], row['mbid'], row['album_name'], row['url'], 
                              row['tag_ranks'], row['toptags'], row['wiki_summary']))
             conn.commit()
             print(f"Saved {len(df_lastfm_tracks)} tracks to postgres")
 
-    return    
+    return
 
 
 def get_ab_features():
@@ -262,11 +268,18 @@ def get_ab_features():
     # get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
 
-    # get all mbid from lastfm_top_tag_tracks
+
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT distinct mbid FROM lastfm_tracks WHERE mbid IS NOT NULL and mbid != ''")
-            mbid_list = [mbid[0] for mbid in cur.fetchall()]
+            # select both mbid and group6_id
+            cur.execute("SELECT mbid, group6_id FROM lastfm_tracks WHERE mbid IS NOT NULL and mbid != ''")
+            mbid_results = cur.fetchall()
+            
+            # create dict mapping from mbid to group6_id
+            mbid_to_group6id = {row[0]: row[1] for row in mbid_results}
+            
+            # list of just mbids for the API calls
+            mbid_list = list(mbid_to_group6id.keys())
 
             batch_size = 25
             print('Starting to get features for', len(mbid_list), f'tracks using batch_size = {batch_size}')
@@ -283,8 +296,16 @@ def get_ab_features():
                 for mbid, data in response.json().items():
                     if mbid not in batch:
                         continue
+                    
+                    # Look up the group6_id for this mbid
+                    group6_id = mbid_to_group6id.get(mbid)
+                    if not group6_id:
+                        print(f"Warning: No group6_id found for mbid {mbid}")
+                        continue
+                        
                     features = {
                         'mbid': mbid,
+                        'group6_id': group6_id,  # Add the group6_id
                         'isrcs': data['0']['metadata'].get('tags', {}).get('isrc', []),
                         'danceability': data['0']['highlevel'].get('danceability', {}).get('all', {}).get('danceable', None),
                         'genre_alternative': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('alternative',None),
@@ -303,12 +324,14 @@ def get_ab_features():
                         'metadata': data['0']['metadata']['tags']
                     }
 
-                    cur.execute("""INSERT INTO acousticbrainz_features (mbid, isrcs, danceability, genre_alternative, genre_blues, 
+                    # Update the INSERT statement to include group6_id
+                    cur.execute("""INSERT INTO acousticbrainz_features (mbid, group6_id, isrcs, danceability, genre_alternative, genre_blues, 
                                                                         genre_electronic, genre_folkcountry, genre_funksoulrnb, genre_jazz, 
                                                                         genre_pop, genre_raphiphop, genre_rock, mood_happy, mood_party, 
                                                                         mood_relaxed, mood_sad, metadata) 
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
-                                (features['mbid'], 
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                                (features['mbid'],
+                                features['group6_id'],  # Add group6_id to VALUES
                                 features['isrcs'], 
                                 features['danceability'], 
                                 features['genre_alternative'], 
@@ -328,12 +351,8 @@ def get_ab_features():
                 
                 conn.commit()
                 
-                print('Batch', i // batch_size + 1, 'of', len(mbid_list) // batch_size, 'comlpete')
+                print('Batch', i // batch_size + 1, 'of', len(mbid_list) // batch_size, 'complete')
                 time.sleep(0.2)
-
-                # for debugging
-                # if (i // batch_size + 1) == 10:
-                #     break
             
     return
 

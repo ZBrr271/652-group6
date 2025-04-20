@@ -13,6 +13,7 @@ import pandas as pd
 from datetime import datetime
 import os
 import unicodedata
+import uuid
 
 
 default_args = {
@@ -58,7 +59,15 @@ def get_spot_tracks():
     # Need to do dynamically, Spotify seems to rotate playlist IDs
     playlist_queries = [
         "Billboard Hot 100: All #1 hit songs 1958-2024",
-        "Top 1000 greatest songs of all time"
+        "Top 1000 greatest songs of all time",
+        "100 Greatest Rock Songs",
+        "Top 100 hip hop hits of all time",
+        "100 Greatest Pop Songs",
+        "Top 100 Most Popular Electronic Songs Of All Time",
+        "Top 100 Alternative Rock Songs",
+        "Top 100 Jazz Songs",
+        "The 100 Greatest Heavy Metal Songs of All Time",
+        "100 Best Folk Songs"
     ]
 
     # Dictionary to store playlist information
@@ -361,12 +370,15 @@ def load_spotify_data():
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             for index, row in clean_spot_df.iterrows():
-                cur.execute("""INSERT INTO spotify_tracks (top_artist, artists, song_name, duration, 
+                group6_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['top_artist'].strip()))
+
+                cur.execute("""INSERT INTO spotify_tracks (group6_id, top_artist, artists, song_name, duration, 
                             popularity, spotify_id, album_name, album_id, album_release_date, album_release_date_precision, 
                             album_image, explicit_lyrics, isrc, spotify_url, available_markets) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
-                            (row['top_artist'], 
-                            row['artists'], 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                            (group6_id,
+                            row['top_artist'], 
+                            row['artists'].split(','), 
                             row['song_name'], 
                             row['duration'], 
                             row['popularity'], 

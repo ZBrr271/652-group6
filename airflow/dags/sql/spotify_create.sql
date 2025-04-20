@@ -2,20 +2,21 @@
 -- pulled from playlist data
 DROP TABLE IF EXISTS spotify_tracks;
 CREATE TABLE spotify_tracks (
-    top_artist VARCHAR(255),
-    artists VARCHAR(255),
-    song_name VARCHAR(255),
+    group6_id TEXT PRIMARY KEY,
+    top_artist TEXT,
+    artists TEXT[],
+    song_name TEXT,
     duration INT,
     popularity INT,
-    spotify_id VARCHAR(100),
-    album_name VARCHAR(255),
-    album_id VARCHAR(100),
+    spotify_id TEXT,
+    album_name TEXT,
+    album_id TEXT,
     album_release_date DATE,
-    album_release_date_precision VARCHAR(100),
-    album_image VARCHAR(100),
+    album_release_date_precision TEXT,
+    album_image TEXT,
     explicit_lyrics BOOLEAN,
-    isrc VARCHAR(100),
-    spotify_url VARCHAR(100),
+    isrc TEXT,
+    spotify_url TEXT,
     available_markets TEXT
 
 );

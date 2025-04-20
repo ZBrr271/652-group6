@@ -2,8 +2,10 @@
 -- sourced from kaggle
 DROP TABLE IF EXISTS billboard_chart_data;
 CREATE TABLE billboard_chart_data (
-    artists VARCHAR(255),
-    song_name VARCHAR(255),
+    group6_id TEXT PRIMARY KEY,
+    top_artist TEXT,
+    artists TEXT[],
+    song_name TEXT,
     peak_chart_pos INT,
     last_chart_pos INT,
     total_wks_on_chart INT,
