@@ -305,10 +305,10 @@ def get_ab_features():
             # Simple, direct field extraction
             features = {
                 'mbid': mbid,
-                'artist': tags.get('artist', None),
-                'song_name': tags.get('title', None),
-                'album': tags.get('album', None),
-                'date': tags.get('date', None),
+                'artist': json.dumps(tags.get('artist', None)),
+                'song_name': json.dumps(tags.get('title', None)),
+                'album': json.dumps(tags.get('album', None)),
+                'date': json.dumps(tags.get('date', None)),
                 'isrcs': json.dumps(tags.get('isrc', None)),
                 'bpm': tags.get('bpm', None),
                 'initialkey': tags.get('initialkey', None),
