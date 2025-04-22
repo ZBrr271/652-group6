@@ -1,7 +1,8 @@
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template_string, request, jsonify
 import psycopg2
 import json
 import datetime
+
 
 app = Flask(__name__)
 
@@ -19,6 +20,60 @@ def safe_serialize(row_dict):
         key: (value.isoformat() if isinstance(value, (datetime.date, datetime.datetime)) else value)
         for key, value in row_dict.items()
     }
+
+@app.route('/cross-platform-consensus-data', methods=["GET", "POST"])
+def cross_platform_consensus():
+    filter_artist = None
+    filter_values = []
+
+    base_conditions = """
+        sp.popularity > 70 AND 
+        lf.playcount > 100000 AND 
+        bl.total_wks_on_chart > 5
+    """
+
+    where_clause = f"WHERE {base_conditions}"
+
+    if request.method == "POST":
+        filter_artist = request.form.get("artist_name")
+        if filter_artist:
+            where_clause += " AND LOWER(sp.top_artist) LIKE %s"
+            filter_values.append(f"%{filter_artist.lower()}%")
+
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+
+    query = f"""
+        SELECT DISTINCT
+            sp.group6_id,
+            sp.top_artist AS spotify_artist,
+            sp.song_name AS track_name,
+            sp.popularity AS spotify_popularity,
+            lf.playcount AS lastfm_playcount,
+            lf.listeners AS lastfm_listeners,
+            lf.tag_ranks AS lastfm_tags,
+            bl.peak_chart_pos AS billboard_peak_position,
+            bl.total_wks_on_chart AS billboard_weeks_on_chart
+        FROM public.spotify_tracks sp
+        JOIN public.lastfm_tracks lf
+            ON sp.group6_id = lf.group6_id 
+        JOIN public.billboard_chart_data bl
+            ON sp.group6_id = bl.group6_id 
+        {where_clause}
+        ORDER BY bl.peak_chart_pos ASC, sp.popularity DESC
+        LIMIT 50
+    """
+
+    cur.execute(query, filter_values)
+    rows = cur.fetchall()
+    column_names = [desc[0] for desc in cur.description]
+    cur.close()
+    conn.close()
+
+    data = [safe_serialize(dict(zip(column_names, row))) for row in rows]
+    print(json.dumps(data, indent=4))
+
+    return jsonify(data)
 
 @app.route('/cross-platform-consensus', methods=["GET", "POST"])
 def show_cross_platform_consensus():
@@ -44,6 +99,7 @@ def show_cross_platform_consensus():
 
     query = f"""
         SELECT DISTINCT
+            sp.group6_id,
             sp.top_artist AS spotify_artist,
             sp.song_name AS track_name,
             sp.popularity AS spotify_popularity,
@@ -54,9 +110,9 @@ def show_cross_platform_consensus():
             bl.total_wks_on_chart AS billboard_weeks_on_chart
         FROM public.spotify_tracks sp
         JOIN public.lastfm_tracks lf
-            ON sp.song_name = lf.song_name AND sp.top_artist = lf.artist
+            ON sp.group6_id = lf.group6_id 
         JOIN public.billboard_chart_data bl
-            ON sp.song_name = bl.song_name AND sp.top_artist = ANY(string_to_array(bl.artists, ','))
+            ON sp.group6_id = bl.group6_id 
         {where_clause}
         ORDER BY bl.peak_chart_pos ASC, sp.popularity DESC
         LIMIT 50
@@ -111,6 +167,49 @@ def show_cross_platform_consensus():
 
     return render_template_string(html_template, rows=rows, filter_artist=filter_artist, column_names=column_names)
 
+@app.route('/merged-tracks-data', methods=["GET", "POST"])
+def merged_tracks():
+    filter_artist = None
+    filter_clause = ""
+    filter_values = []
+
+    if request.method == "POST":
+        filter_artist = request.form.get("artist_name")
+        if filter_artist:
+            filter_clause = "WHERE LOWER(sp.top_artist) LIKE %s"
+            filter_values.append(f"%{filter_artist.lower()}%")
+
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
+
+    query = f"""
+        SELECT DISTINCT 
+            sp.group6_id,
+            sp.top_artist,
+            sp.song_name,
+            lf.artist,
+            lf.song_name,
+            mbid
+        FROM public.spotify_tracks sp
+        JOIN public.lastfm_tracks lf 
+            ON sp.group6_id = lf.group6_id 
+        JOIN public.billboard_chart_data bl 
+            ON sp.group6_id = bl.group6_id 
+        {filter_clause}
+    """
+
+    cur.execute(query, filter_values)
+    rows = cur.fetchall()
+    column_names = [desc[0] for desc in cur.description]
+    cur.close()
+    conn.close()
+
+
+    data = [dict(zip(column_names, row)) for row in rows]
+    print(json.dumps(data, indent=4))  
+
+    return jsonify(data)
+
 @app.route('/merged-tracks', methods=["GET", "POST"])
 def show_merged_tracks():
     filter_artist = None
@@ -128,6 +227,7 @@ def show_merged_tracks():
 
     query = f"""
         SELECT DISTINCT 
+            sp.group6_id,
             sp.top_artist,
             sp.song_name,
             lf.artist,
@@ -135,11 +235,9 @@ def show_merged_tracks():
             mbid
         FROM public.spotify_tracks sp
         JOIN public.lastfm_tracks lf 
-            ON sp.song_name = lf.song_name 
-            AND sp.top_artist = lf.artist
+            ON sp.group6_id = lf.group6_id 
         JOIN public.billboard_chart_data bl 
-            ON sp.song_name = bl.song_name 
-            AND sp.top_artist = ANY(string_to_array(bl.artists, ','))
+            ON sp.group6_id = bl.group6_id 
         {filter_clause}
     """
 
@@ -175,6 +273,7 @@ def show_merged_tracks():
         </form>
         <table>
             <tr>
+                <th>Group6 Unique ID</th>
                 <th>Spotify Artist</th>
                 <th>Spotify Song</th>
                 <th>Last.fm Artist</th>
