@@ -1,3 +1,6 @@
+-- 685.652, Spring 2025 - Group 6 Final Project
+-- spotify_create.sql
+
 -- create table for spotify tracks
 -- pulled from playlist data
 DROP TABLE IF EXISTS spotify_tracks;

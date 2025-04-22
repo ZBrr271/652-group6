@@ -342,6 +342,15 @@ def get_ab_features():
             }
             
             features['bpm'] = features['bpm'][0] if isinstance(features['bpm'], list) else features['bpm']
+            if features['artist'].isinstance(list):
+                features['artist'] = features['artist'][0]
+            if features['song_name'].isinstance(list):
+                features['song_name'] = features['song_name'][0]
+            if features['album'].isinstance(list):
+                features['album'] = features['album'][0]
+            if features['date'].isinstance(list):
+                features['date'] = features['date'][0]
+
             results.append(features)
         
         print('Batch', i // batch_size + 1, 'of', (len(mbid_list) - 1) // batch_size + 1, 'complete')

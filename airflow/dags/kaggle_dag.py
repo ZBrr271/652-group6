@@ -1,3 +1,10 @@
+# 685.652, Spring 2025 - Group 6 Final Project
+# kaggle_dag.py
+
+# This DAG gets billboard hot 100 chart data from kaggle
+# Cleans and transforms it
+# Then loads it into postgres
+
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -26,6 +33,7 @@ default_args = {
 def get_kag_file():
 
     # User needs to set up account on kaggle and generate API key
+    # Set the KAG_USERNAME and KAG_KEY in variables.json
     os.environ['KAGGLE_USERNAME'] = Variable.get("KAG_USERNAME")
     os.environ['KAGGLE_KEY'] = Variable.get("KAG_KEY") 
 
@@ -38,6 +46,7 @@ def get_kag_file():
     os.makedirs(data_dir, exist_ok=True)
 
     # Download the dataset by running the kaggle command
+    # The kaggle package gets installed on build
     subprocess.run([
         'kaggle', 'datasets', 'download', 
         '-d', dataset_name, 
@@ -125,7 +134,7 @@ def process_kag_file(file_name):
 
     print(f"Number of Kaggle dataset rows before removing duplicates: {len(df_kaggle)}")
 
-    # Group by top_artist and title, aggregate, and keep the first 'performer' value
+    # Group by top_artist and title, then aggregate
     date_groups = df_kaggle.groupby(['top_artist', 'title']).agg(
         performer=('performer', 'first'),           # Keep the first performer string
         chart_week_min=('chart_week', 'min'),      # Rename agg results directly
@@ -171,8 +180,6 @@ def process_kag_file(file_name):
           f"{count} songs that peaked at #1")
     print(f"Dataframe has columns: {', '.join(df_kaggle.columns)}\n")
 
-
-    # Return the processed dataframe
     return df_kaggle
 
 
@@ -201,7 +208,6 @@ def load_billboard_data():
                             row['total_wks_on_chart'], 
                             row['wk_first_charted'],
                             row['wk_last_charted']))
-
 
 
 with DAG(

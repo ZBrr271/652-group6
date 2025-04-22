@@ -1,3 +1,6 @@
+-- 685.652, Spring 2025 - Group 6 Final Project
+-- lastfm_brainz_create_z.sql
+
 -- drop all tables if they exist
 DROP TABLE IF EXISTS lastfm_tracks;
 DROP TABLE IF EXISTS acousticbrainz_features;

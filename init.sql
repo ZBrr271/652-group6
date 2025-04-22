@@ -1,3 +1,6 @@
+-- 685.652, Spring 2025 - Group 6 Final Project
+-- init.sql
+
 CREATE USER group6 WITH PASSWORD 'group6';
 CREATE DATABASE group6;
 GRANT ALL PRIVILEGES ON DATABASE group6 TO group6;

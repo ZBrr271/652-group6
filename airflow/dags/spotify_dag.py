@@ -1,3 +1,10 @@
+# 685.652, Spring 2025 - Group 6 Final Project
+# spotify_dag.py
+
+# This DAG gets spotify data
+# Cleans and transforms it
+# Then loads it into postgres
+
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -28,9 +35,10 @@ default_args = {
 
 
 
-# Retrieve tracks from a specific playlist from Spotify API
+# Retrieve tracks from specific playlists from Spotify API
 def get_spot_tracks():
 
+    # These need to be set in variables.json
     client_id = Variable.get("SPOTIFY_CLIENT_ID")
     client_secret = Variable.get("SPOTIFY_CLIENT_SECRET")
 
@@ -56,7 +64,7 @@ def get_spot_tracks():
     headers = {"Authorization": f"Bearer {token}"}
     
     # Harcoding good playlists for our purposes
-    # Need to do dynamically, Spotify seems to rotate playlist IDs
+    # Need to do query to get the playlist ID, Spotify seems to rotate playlist IDs
     playlist_queries = [
         "Billboard Hot 100: All #1 hit songs 1958-2024",
         "Top 1000 greatest songs of all time",
@@ -124,7 +132,7 @@ def get_spot_tracks():
         # Get all pages
         while playlist_tracks_url:
             page += 1
-            if page > 20:  # Just a failsafe to prevent excessive API calls
+            if page > 50:  # Just a failsafe to prevent excessive API calls
                 break
 
             # To comply with Spotify API rate limits
@@ -205,6 +213,8 @@ def parse_spotify_tracks(spot_tracks):
 
     df = pd.DataFrame(all_track_details)
 
+    # Make a timestamped csv for record
+    # Saves to data folder
     data_dir = os.path.join(os.getcwd(), 'data')
     os.makedirs(data_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -215,7 +225,9 @@ def parse_spotify_tracks(spot_tracks):
 
     return df
 
-
+# A few cases where only year is listed
+# Need to prepend day and month
+# Since to_datetime doesn't work with just year
 def convert_date(date_str):
     if pd.isna(date_str):
         return None
@@ -233,7 +245,6 @@ def replace_accented_characters(s):
     return s 
 
 
-
 # Further clean the spotify tracks dataframe
 def clean_spotify_tracks(df):
     print(f"Cleaning Spotify data...\n")
@@ -243,13 +254,15 @@ def clean_spotify_tracks(df):
 
     print(f"Current number of tracks: {len(spot_df)}")
     print(f"Dropping duplicates where playlists overlap...")
+
+    # isrc is great duplicate key for this spotify data
     duplicate_count = spot_df.duplicated(subset='isrc', keep=False).sum()
     print(f"Number of 'isrc' duplicates: {duplicate_count}")
     spot_df = spot_df.drop_duplicates(subset='isrc', keep='first')
     print(f"Removed {duplicate_count} duplicates")
     print(f"Remaining number of tracks: {len(spot_df)}\n")
 
-    # Clean the artists column
+    # Clean a few specific columns
     cols_to_clean = ['top_artist', 'artists', 'song_name', 'album_name']
     for col in cols_to_clean:
         if col in spot_df.columns:
@@ -287,6 +300,7 @@ def clean_spotify_tracks(df):
     print(f"Remaining number of tracks: {len(spot_df)}\n")
 
     # Sort by top artist and song name
+    # Not needed for storage, but helps with debugging
     spot_df.sort_values(by=['top_artist', 'song_name'], inplace=True)
 
     # Check for similar entries (adjacent rows after sorting)
@@ -358,14 +372,16 @@ def clean_spotify_tracks(df):
 
 
 
-# Loads kaggle data into postgres
+# Calls other functions to get and clean spotify data
+# Then loads it into postgres
 def load_spotify_data():
 
     raw_spot_tracks = get_spot_tracks()
     df = parse_spotify_tracks(raw_spot_tracks)
     clean_spot_df = clean_spotify_tracks(df)
+    num_tracks = len(clean_spot_df)
 
-    # get postgres connection
+    # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
@@ -393,11 +409,8 @@ def load_spotify_data():
                             row['spotify_url'], 
                             row['available_markets']))
                 conn.commit()
-                # Just leaving this in for testing right now
-                print(f"Saved track {row['song_name']} by {row['top_artist']}")
 
-                conn.commit()
-            print(f"Saved all Spotify tracks")
+            print(f"Saved {num_tracks} Spotify tracks to database")
 
 
 with DAG(

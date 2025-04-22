@@ -1,5 +1,8 @@
+-- 685.652, Spring 2025 - Group 6 Final Project
+-- billboard_create.sql
+
 -- create table for billboard chart data
--- sourced from kaggle
+-- dataset is sourced from kaggle
 DROP TABLE IF EXISTS billboard_chart_data;
 CREATE TABLE billboard_chart_data (
     group6_id TEXT PRIMARY KEY,

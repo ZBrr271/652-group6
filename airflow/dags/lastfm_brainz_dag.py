@@ -1,3 +1,10 @@
+# 685.652, Spring 2025 - Group 6 Final Project
+# lastfm_brainz_dag.py
+
+# This DAG gets lastfm and acousticbrainz data
+# Cleans and transforms it
+# Then loads it into postgres
+
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -29,25 +36,26 @@ api_key = Variable.get("LASTFM_API_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
 
+# Gets last.fm top tags from tag.getTopTags endpoint
 def get_top_tags():
     print(f"Getting top {MAX_TAGS} tags from LastFM")
     
-    # get postgres connection
+    # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
 
-    # set up params for lastfm api
+    # Set up params for lastfm api
     params = {
         "method": "tag.getTopTags",
         "api_key": api_key,
         "format": "json"
     }
 
-    # call lastfm api
+    # Call lastfm api
     top_tags_r = requests.get(base_url, params=params, headers=HEADERS)
     top_tags_data = top_tags_r.json()
     df_top_tags = pd.DataFrame(top_tags_data['toptags']['tag'][:MAX_TAGS])
     
-    # write data to postgres
+    # Write data to postgres
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             for index, row in df_top_tags.iterrows():
@@ -58,32 +66,33 @@ def get_top_tags():
     return
 
 
+# Gets basic track info from tag.getTopTracks endpoint
 def get_track_basics():
     print(f"Getting basics for {TRACKS_PER_TAG} tracks for each tag")
     
-    # get api key and base url from airflow variables
+    # Get api key and base url from airflow variables
     api_key = Variable.get("LASTFM_API_KEY")
     base_url = Variable.get("LASTFM_BASE_URL")
 
-    # get postgres connection
+    # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
 
-
-
-    # get top tags from db
+    # Get top tags from db
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT tag_name FROM lastfm_top_tags")
             top_tags = [tag[0] for tag in cur.fetchall()]
 
-
+    # List to store all tracks
     all_tracks_initial = []
     track_data = []
 
-    # get tracks for each tag
+    # Get tracks for each tag
     for tag in top_tags:
         print(f"Getting tracks for tag: {tag}")
         tag_tracks = []
+
+        # Need to paginate
         page = 1
         while len(tag_tracks) < TRACKS_PER_TAG:
             time.sleep(0.2)
@@ -101,15 +110,20 @@ def get_track_basics():
             if not tracks:
                 break
 
+            # Add tag to each track
             for track in tracks:
                 track["tag"] = tag
 
             tag_tracks.extend(tracks)
             page += 1
+
+        # Truncate as needed
         tag_tracks = tag_tracks[:TRACKS_PER_TAG]
         all_tracks_initial.extend(tag_tracks)
     
     print("Total number of tracks retrieved from LastFM:", len(all_tracks_initial))
+
+    # If duplicate mbid, consolidate tag rank
     consolidated_tracks = {}
     for track in all_tracks_initial:
         mbid = track['mbid']
@@ -127,6 +141,7 @@ def get_track_basics():
             }
             consolidated_tracks[mbid] = track_basics
     
+    # Convert to dataframe
     track_data = list(consolidated_tracks.values())
     df_lastfm_initial = pd.DataFrame(track_data)
     initial_count_raw = len(all_tracks_initial)
@@ -137,7 +152,7 @@ def get_track_basics():
 
     return df_lastfm_initial
 
-
+# Get detailed last.fm track info from track.getInfo endpoint
 def get_track_details(df_initial):
     request_count = 0
     all_tracks_details = []
@@ -168,13 +183,16 @@ def get_track_details(df_initial):
         except Exception as e:
             print(f"Error retrieving track info for {mbid}: {e}")
     
+        # Rate limit
+        # Last.fm doesn't publish their limits, but 0.2s was mentioned in some forums
         time.sleep(0.2)
 
     return all_tracks_details
 
-
+# Clean and transform last.fm tracks
 def process_lastfm_tracks(all_tracks_details):
     print("Processing last.fm tracks...")
+
     lastfm_tracks = []
     for track in all_tracks_details:
         track_details = {}
@@ -201,6 +219,7 @@ def process_lastfm_tracks(all_tracks_details):
 
     df_lastfm_tracks.replace('', None, inplace=True)
 
+    # Clean a few columns
     cols_to_clean = ['artist', 'song_name', 'album_name']
     for col in cols_to_clean:
         if col in df_lastfm_tracks.columns:
@@ -216,6 +235,7 @@ def process_lastfm_tracks(all_tracks_details):
 
     print(f"Processed and cleaned {len(df_lastfm_tracks)} tracks")
 
+    # Make a timestamped csv for record
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     data_dir = os.path.join(os.getcwd(), 'data')
     os.makedirs(data_dir, exist_ok=True)
@@ -227,23 +247,26 @@ def process_lastfm_tracks(all_tracks_details):
 
     return df_lastfm_tracks
 
-
+# Calls the other functions to get last.fm tracks
+# Then loads into postgres
 def get_and_load_lastfm_tracks():
     print("Getting and loading last.fm tracks...")
     df_initial = get_track_basics()
     all_tracks_details = get_track_details(df_initial)
     df_lastfm_tracks = process_lastfm_tracks(all_tracks_details)
     
-    # get postgres connection
+    # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
     
-    # write data to postgres
+    # Write data to postgres
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             for index, row in df_lastfm_tracks.iterrows():
+
                 # Generate group6_id
                 group6_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['artist'].strip())))
                 
+                # Insert into the table
                 cur.execute("""INSERT INTO lastfm_tracks (group6_id, artist, song_name, duration, listeners, 
                             playcount, mbid, album_name, url, tag_ranks, toptags, wiki_summary) 
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -257,34 +280,35 @@ def get_and_load_lastfm_tracks():
 
     return
 
-
+# Get acousticbrainz features
+# For all tracks with mbids currently in the lastfm_tracks table
 def get_ab_features():
     print("Getting acousticbrainz features")
 
-    # get base url from airflow variables
+    # Get base url from airflow variables
     base_url = Variable.get("AB_BASE_URL")
     endpoint = base_url + "/api/v1/high-level"
 
-    # get postgres connection
+    # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
 
 
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
-            # select both mbid and group6_id
+            # Select both mbid and group6_id
             cur.execute("SELECT mbid, group6_id FROM lastfm_tracks WHERE mbid IS NOT NULL and mbid != ''")
             mbid_results = cur.fetchall()
             
-            # create dict mapping from mbid to group6_id
+            # Create dict mapping from mbid to group6_id
             mbid_to_group6id = {row[0]: row[1] for row in mbid_results}
             
-            # list of just mbids for the API calls
+            # List of just mbids for the API calls
             mbid_list = list(mbid_to_group6id.keys())
 
             batch_size = 25
             print('Starting to get features for', len(mbid_list), f'tracks using batch_size = {batch_size}')
 
-            # get features for each batch of mbid
+            # Get features for each batch of mbid
             for i in range(0, len(mbid_list), batch_size):
                 batch = mbid_list[i:i + batch_size]
                 params = {
@@ -292,7 +316,7 @@ def get_ab_features():
                 }
                 response = requests.get(endpoint, params=params, headers=HEADERS)
 
-                # write batch to postgres
+                # Write batch to postgres
                 for mbid, data in response.json().items():
                     if mbid not in batch:
                         continue
@@ -324,14 +348,14 @@ def get_ab_features():
                         'metadata': data['0']['metadata']['tags']
                     }
 
-                    # Update the INSERT statement to include group6_id
+                    # Insert into the table
                     cur.execute("""INSERT INTO acousticbrainz_features (mbid, group6_id, isrcs, danceability, genre_alternative, genre_blues, 
                                                                         genre_electronic, genre_folkcountry, genre_funksoulrnb, genre_jazz, 
                                                                         genre_pop, genre_raphiphop, genre_rock, mood_happy, mood_party, 
                                                                         mood_relaxed, mood_sad, metadata) 
                                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
                                 (features['mbid'],
-                                features['group6_id'],  # Add group6_id to VALUES
+                                features['group6_id'],
                                 features['isrcs'], 
                                 features['danceability'], 
                                 features['genre_alternative'], 

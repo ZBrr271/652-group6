@@ -1,3 +1,6 @@
+-- 685.652, Spring 2025 - Group 6 Final Project
+-- lastfm_brainz_create.sql
+
 -- drop all tables if they exist
 DROP TABLE IF EXISTS lastfm_tracks;
 DROP TABLE IF EXISTS acousticbrainz_features;
@@ -33,7 +36,6 @@ CREATE TABLE acousticbrainz_features (
 );
 
 -- create table for lastfm tag tracks
--- contains nulls for some track_mbid, so we can't use it as a primary key
 CREATE TABLE lastfm_tracks (
     mbid TEXT PRIMARY KEY,
     group6_id TEXT,

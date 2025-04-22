@@ -1,4 +1,6 @@
-# 652-group6
+# 652-group6-finalproject
+# NOTE - REFER TO THE PROJECT WRITEUP FOR GENERAL INSTRUCTIONS FIRST
+# AND REFER TO DETAILED INSTRUCTIONS HERE AS REQUIRED
 
 A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API. Currently configured to collect music data from LastFM's API.
 
