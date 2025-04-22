@@ -6,7 +6,7 @@ A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API.
 
 ## Architecture
 
-The project runs three services via Docker Compose:
+The project runs five services via Docker Compose:
 
 1. **PostgreSQL**
    - Port: 5432
@@ -18,13 +18,26 @@ The project runs three services via Docker Compose:
      - `airflow`: Manages Airflow's backend
      - `group6`: Stores pipeline data
 
-2. **Apache Airflow**
-   - Web UI port: 8081
-   - Manages data pipeline workflows
+2. **Redis**
+   - Port: 6379
+   - Message broker for Airflow's Celery executor
+   - Manages task queue for Airflow workers
+
+3. **Apache Airflow**
+   - Consists of multiple components:
+     - **airflow-init**: One-time initialization service
+       - Creates admin user
+       - Sets up connections and variables
+       - Runs database migrations
+     - **airflow**: Main Airflow webserver and scheduler
+       - Web UI port: 8081
+       - Manages DAG scheduling and execution
+     - **airflow-worker**: Celery workers that execute tasks
    - Custom image built from `Dockerfile.af`
    - Uses PostgreSQL as backend database
+   - Uses Redis as message broker
 
-3. **Flask API**
+4. **Flask API**
    - Port: 5001
    - REST API for data access
    - Custom image built from `Dockerfile.flask`
