@@ -29,7 +29,7 @@ user_agent = Variable.get("LASTFM_USER_AGENT")
 api_key = Variable.get("LASTFM_Z_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
-MAX_TAGS = 20
+MAX_TAGS = 25
 TRACKS_PER_TAG = 250
 HEADERS = {"User-Agent": user_agent}
 

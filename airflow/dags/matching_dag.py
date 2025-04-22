@@ -83,6 +83,8 @@ def match_spot_to_kag(df_spot, df_kag):
     df_kag = df_kag.reset_index(drop=True)
 
     print(f"Filtered Kaggle dataset to {len(df_kag)} records with peak chart position <= {KAG_FILTER}")
+    print(f"Will search for matches within the {len(df_spot)} Spotify records")
+    print(f"This may take a while...")
 
     df_kag['has_spot_match'] = False
     df_kag['spot_match_index'] = None
@@ -490,7 +492,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                     best_match_name_match_pct = title_score
                     best_match_lastfm_index = i
 
-                if geo_mean_score >= 70:
+                if geo_mean_score >= 75:
                     match_found = True
 
                     lastfm_index = i
@@ -546,7 +548,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                         best_match_name_match_pct = title_score
                         best_match_lastfm_index = i
 
-                    if geo_mean_score >= 70:
+                    if geo_mean_score >= 75:
                         match_found = True
                         lastfm_index = i
                         df_spot.at[index, 'has_lastfm_match'] = True
@@ -599,7 +601,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                     best_match_name_match_pct = title_score
                     best_match_lastfm_index = i
 
-                if geo_mean_score >= 70:
+                if geo_mean_score >= 75:
                     match_found = True
                     lastfm_index = i
                     df_spot.at[index, 'has_lastfm_match'] = True

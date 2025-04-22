@@ -78,7 +78,8 @@ def get_spot_tracks():
         "100 Best Folk Songs",
         "Top hits of the 2000s",
         "90s hits top 100 songs",
-        "Top hits of the 2010s"
+        "Top hits of the 2010s",
+        "80s hits top 100 songs"
     ]
 
     # Dictionary to store playlist information
