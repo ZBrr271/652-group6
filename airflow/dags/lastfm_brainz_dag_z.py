@@ -30,7 +30,7 @@ api_key = Variable.get("LASTFM_Z_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
 MAX_TAGS = 20
-TRACKS_PER_TAG = 10
+TRACKS_PER_TAG = 200
 HEADERS = {"User-Agent": user_agent}
 
 def get_top_tags():
@@ -252,7 +252,8 @@ def get_and_load_lastfm_tracks():
 
                 cur.execute("""INSERT INTO lastfm_tracks (mbid, group6_id, artist, song_name, duration, listeners, 
                             playcount, album_name, url, tag_ranks, toptags, wiki_summary) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING""", 
                             (row['mbid'], group6_id,
                              row['artist'], row['song_name'], row['duration'], row['listeners'], 
                              row['playcount'], row['album_name'], row['url'], 
