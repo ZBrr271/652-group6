@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import os
 import numpy as np
 import unicodedata
+import uuid
 
 
 default_args = {
@@ -29,7 +30,7 @@ api_key = Variable.get("LASTFM_Z_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
 MAX_TAGS = 20
-TRACKS_PER_TAG = 150
+TRACKS_PER_TAG = 10
 HEADERS = {"User-Agent": user_agent}
 
 def get_top_tags():
@@ -240,15 +241,21 @@ def get_and_load_lastfm_tracks():
     # get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
     
+
     # write data to postgres
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             for index, row in df_lastfm_tracks.iterrows():
-                cur.execute("""INSERT INTO lastfm_tracks (artist, song_name, duration, listeners, 
-                            playcount, mbid, album_name, url, tag_ranks, toptags, wiki_summary) 
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
-                            (row['artist'], row['song_name'], row['duration'], row['listeners'], 
-                             row['playcount'], row['mbid'], row['album_name'], row['url'], 
+
+                # Generate group6_id
+                group6_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['artist'].strip())))
+
+                cur.execute("""INSERT INTO lastfm_tracks (mbid, group6_id, artist, song_name, duration, listeners, 
+                            playcount, album_name, url, tag_ranks, toptags, wiki_summary) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                            (row['mbid'], group6_id,
+                             row['artist'], row['song_name'], row['duration'], row['listeners'], 
+                             row['playcount'], row['album_name'], row['url'], 
                              row['tag_ranks'], row['toptags'], row['wiki_summary']))
             conn.commit()
             print(f"Saved {len(df_lastfm_tracks)} tracks to postgres")
@@ -256,12 +263,6 @@ def get_and_load_lastfm_tracks():
     return    
 
 
-# Function to replace accented characters
-def replace_accented_characters(s):
-    if isinstance(s, str):  # Check if the value is a string
-        normalized_string = unicodedata.normalize('NFD', s)
-        return ''.join(c for c in normalized_string if unicodedata.category(c) != 'Mn')
-    return s
 
 
 def get_ab_features():
@@ -277,8 +278,15 @@ def get_ab_features():
     # get all mbid from lastfm_top_tag_tracks
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT distinct mbid FROM lastfm_tracks WHERE mbid IS NOT NULL and mbid != ''")
-            mbid_list = [mbid[0] for mbid in cur.fetchall()]
+            # Select both mbid and group6_id
+            cur.execute("SELECT mbid, group6_id FROM lastfm_tracks WHERE mbid IS NOT NULL and mbid != ''")
+            mbid_results = cur.fetchall()
+            
+            # Create dict mapping from mbid to group6_id
+            mbid_to_group6id = {row[0]: row[1] for row in mbid_results}
+            
+            # List of just mbids for the API calls
+            mbid_list = list(mbid_to_group6id.keys())
 
     batch_size = 25
     print('Starting to get features for', len(mbid_list), f'tracks using batch_size = {batch_size}')
@@ -299,6 +307,11 @@ def get_ab_features():
         for mbid, data in response_data.items():
             if mbid not in batch or '0' not in data:
                 continue
+
+            group6_id = mbid_to_group6id.get(mbid)
+            if not group6_id:
+                print(f"Warning: No group6_id found for mbid: {mbid}")
+                continue
             
             metadata = data['0']['metadata']
             tags = metadata.get('tags', {})
@@ -307,12 +320,13 @@ def get_ab_features():
             # Simple, direct field extraction
             features = {
                 'mbid': mbid,
+                'group6_id': group6_id,
                 'artist': json.dumps(tags.get('artist', None)),
                 'song_name': json.dumps(tags.get('title', None)),
                 'album': json.dumps(tags.get('album', None)),
                 'date': json.dumps(tags.get('date', None)),
                 'isrcs': json.dumps(tags.get('isrc', None)),
-                'bpm': tags.get('bpm', None),
+                'bpm': json.dumps(tags.get('bpm', None)),
                 'initialkey': tags.get('initialkey', None),
                 'musicbrainz_albumid': tags.get('musicbrainz_albumid', None),
                 'musicbrainz_artistid': tags.get('musicbrainz_artistid', None),
@@ -343,54 +357,25 @@ def get_ab_features():
                 'genre': json.dumps(tags.get('genre', None))
             }
             
-            features['bpm'] = features['bpm'][0] if isinstance(features['bpm'], list) else features['bpm']
-            if features['artist'].isinstance(list):
-                features['artist'] = features['artist'][0]
-            if features['song_name'].isinstance(list):
-                features['song_name'] = features['song_name'][0]
-            if features['album'].isinstance(list):
-                features['album'] = features['album'][0]
-            if features['date'].isinstance(list):
-                features['date'] = features['date'][0]
 
             results.append(features)
         
+
         print('Batch', i // batch_size + 1, 'of', (len(mbid_list) - 1) // batch_size + 1, 'complete')
-        
         time.sleep(0.2)
     
     if results:
         results_df = pd.DataFrame(results)
         
         results_df.replace('', None, inplace=True)
-        cols_to_clean = ['artist', 'song_name', 'album']
-        for col in cols_to_clean:
-            if col in results_df.columns:
-                results_df[col] = results_df[col].astype(str)
-                results_df[col] = results_df[col].str.lower().str.strip()
-                results_df[col] = results_df[col].apply(replace_accented_characters)
-        
-        if 'artist' in results_df.columns:
-            results_df['artist'] = results_df['artist'].str.replace(r' \(featuring ([^)]*)\)', r', \1', regex=True)
-            results_df['artist'] = results_df['artist'].str.replace(r' \(feat. ([^)]*)\)', r', \1', regex=True)
-            results_df['artist'] = results_df['artist'].str.replace('featuring', ',')
-            results_df['artist'] = results_df['artist'].str.replace('feat.', ',')
-            results_df['artist'] = results_df['artist'].str.replace('&', 'and')
-            results_df['artist'] = results_df['artist'].str.replace(r' ,', r',', regex=True)
-        
-        if 'bpm' in results_df.columns:
-            results_df['bpm'] = pd.to_numeric(results_df['bpm'], errors='coerce')
-            results_df['bpm'] = results_df['bpm'].round()
-            results_df['bpm'] = results_df['bpm'].where(pd.notnull(results_df['bpm']), None)
-            results_df['bpm'] = results_df['bpm'].astype('Int64')
 
         # Convert empty strings to None for all numeric fields
-        numeric_fields = ['bpm', 'danceability_danceable', 'danceability_not_danceable', 
-                         'gender_female', 'gender_male', 
-                         'genre_alternative', 'genre_blues', 'genre_electronic', 
-                         'genre_folkcountry', 'genre_funksoulrnb', 'genre_jazz', 
-                         'genre_pop', 'genre_raphiphop', 'genre_rock',
-                         'voice_instrumental_instrumental', 'voice_instrumental_voice']
+        numeric_fields = ['danceability_danceable', 'danceability_not_danceable', 
+                        'gender_female', 'gender_male', 
+                        'genre_alternative', 'genre_blues', 'genre_electronic', 
+                        'genre_folkcountry', 'genre_funksoulrnb', 'genre_jazz', 
+                        'genre_pop', 'genre_raphiphop', 'genre_rock',
+                        'voice_instrumental_instrumental', 'voice_instrumental_voice']
         
         # Convert numeric fields that need to be floats
         for field in numeric_fields:
@@ -424,7 +409,7 @@ def get_ab_features():
                         track[key] = None
                 
                 cur.execute("""INSERT INTO acousticbrainz_features 
-                            (mbid, artist, song_name, album, date, isrcs,
+                            (mbid, group6_id, artist, song_name, album, date, isrcs,
                             bpm, initialkey, musicbrainz_albumid, musicbrainz_artistid, mood,
                             danceability_danceable, danceability_not_danceable, danceability_max_class,
                             gender_female, gender_male, gender_max_class,
@@ -432,8 +417,9 @@ def get_ab_features():
                             genre_jazz, genre_pop, genre_raphiphop, genre_rock, genre_dortmund_maxclass,
                             voice_instrumental_instrumental, voice_instrumental_voice, voice_instrumental_max_class, genre) 
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
                             (track['mbid'], 
+                            track['group6_id'],
                             track['artist'], 
                             track['song_name'], 
                             track['album'], 

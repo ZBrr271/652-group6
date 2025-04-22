@@ -16,16 +16,17 @@ CREATE TABLE lastfm_top_tags (
 
 -- create table for acousticbrainz features
 CREATE TABLE acousticbrainz_features (
-    mbid VARCHAR(36) PRIMARY KEY,
-    artist VARCHAR(255),
-    song_name VARCHAR(255),
-    album VARCHAR(255),
-    date VARCHAR(255),
+    mbid TEXT,
+    group6_id TEXT,
+    artist JSONB,
+    song_name JSONB,
+    album JSONB,
+    date JSONB,
     isrcs JSONB,                         
-    bpm NUMERIC,
-    initialkey VARCHAR(255),
-    musicbrainz_albumid VARCHAR(255),
-    musicbrainz_artistid VARCHAR(255),
+    bpm JSONB,
+    initialkey TEXT,
+    musicbrainz_albumid TEXT,
+    musicbrainz_artistid TEXT,
     mood JSONB,
     danceability_danceable FLOAT,
     danceability_not_danceable FLOAT,
@@ -52,18 +53,16 @@ CREATE TABLE acousticbrainz_features (
 
 -- create table for lastfm tag tracks
 CREATE TABLE lastfm_tracks (
-    artist VARCHAR(255),
-    song_name VARCHAR(255),
+    mbid TEXT PRIMARY KEY,
+    group6_id TEXT,
+    artist TEXT,
+    song_name TEXT,
     duration INT,
     listeners INT,
     playcount INT,
-    mbid VARCHAR(255) NOT NULL,
-    album_name VARCHAR(255),
-    url VARCHAR(255),
+    album_name TEXT,
+    url TEXT,
     tag_ranks JSONB,
     toptags TEXT[],
     wiki_summary TEXT
 );
-
-
-
