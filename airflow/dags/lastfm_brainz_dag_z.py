@@ -30,7 +30,7 @@ api_key = Variable.get("LASTFM_Z_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
 MAX_TAGS = 20
-TRACKS_PER_TAG = 50
+TRACKS_PER_TAG = 250
 HEADERS = {"User-Agent": user_agent}
 
 def get_top_tags():

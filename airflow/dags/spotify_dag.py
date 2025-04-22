@@ -75,7 +75,10 @@ def get_spot_tracks():
         "Top 100 Alternative Rock Songs",
         "Top 100 Jazz Songs",
         "The 100 Greatest Heavy Metal Songs of All Time",
-        "100 Best Folk Songs"
+        "100 Best Folk Songs",
+        "Top hits of the 2000s",
+        "90s hits top 100 songs",
+        "Top hits of the 2010s"
     ]
 
     # Dictionary to store playlist information

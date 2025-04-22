@@ -74,10 +74,15 @@ def append_match_result(results, spot_artists, spot_song_name, other_artists, ot
 
 def match_spot_to_kag(df_spot, df_kag):
 
-    df_kag = df_kag[df_kag['peak_chart_pos'] <= 10]
+    # To decrease matching time, filter out songs
+    # That didn't make top 25
+    # Because fuzzy string matching is slow
+    KAG_FILTER = 25
+
+    df_kag = df_kag[df_kag['peak_chart_pos'] <= KAG_FILTER]
     df_kag = df_kag.reset_index(drop=True)
 
-    print(f"Filtered Kaggle dataset to {len(df_kag)} records with peak chart position <= 10")
+    print(f"Filtered Kaggle dataset to {len(df_kag)} records with peak chart position <= {KAG_FILTER}")
 
     df_kag['has_spot_match'] = False
     df_kag['spot_match_index'] = None
