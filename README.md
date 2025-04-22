@@ -2,7 +2,7 @@
 # NOTE - REFER TO THE PROJECT WRITEUP FOR GENERAL INSTRUCTIONS FIRST
 # AND REFER TO DETAILED INSTRUCTIONS HERE AS REQUIRED
 
-A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API. Currently configured to collect music data from LastFM's API.
+A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API. Currently configured to collect music data from Spotify, Kaggle, and LastFM.
 
 ## Architecture
 
@@ -30,47 +30,6 @@ The project runs three services via Docker Compose:
    - Custom image built from `Dockerfile.flask`
 
 ## Configuration
-
-### Docker Compose Quick Hits
-Key components in `docker-compose.yml`:
-```yaml
-# Shared environment variables for Airflow services
-x-common-env: &airflow-common-env
-  AIRFLOW_HOME: /home/jhu/airflow
-  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
-
-services:
-  postgres:
-    # Healthcheck ensures database is ready before other services start
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
-    volumes:
-      # Persists database data
-      - postgres_data:/var/lib/postgresql/data
-      # Initializes database with users and permissions
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-
-  airflow-init:
-    # One-time setup service that:
-    # - Initializes Airflow database
-    # - Creates admin user
-    # - Sets up connections
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  airflow:
-    # Main Airflow service (webserver + scheduler)
-    volumes:
-      # Maps local DAGs to container
-      - ./airflow:/home/jhu/airflow
-    depends_on:
-      # Ensures proper startup order
-      postgres:
-        condition: service_healthy
-      airflow-init:
-        condition: service_completed_successfully
-```
 
 ### Docker Setup
 - `docker-compose.yml`: Service definitions and environment variables
@@ -121,7 +80,7 @@ docker-compose up --build -d
        - `airflow`: Airflow metadata
        - `group6`: Pipeline data
      - Username: group6 or airflow
-     - Password: group6 or airlow
+     - Password: group6 or airflow
 
 4. Shutdown:
 ```bash
@@ -130,16 +89,4 @@ docker-compose down -v
 
 # Stop containers but preserve data
 docker-compose down
-```
-
-## Troubleshooting
-
-If services fail to start properly:
-1. Check container logs
-2. Ensure ports aren't already in use
-3. Try full reset:
-```bash
-docker-compose down -v
-docker system prune -f
-docker-compose up --build -d
 ```
