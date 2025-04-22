@@ -29,11 +29,14 @@ default_args = {
     'retries': None
 }
 
-MAX_TAGS = 20
-TRACKS_PER_TAG = 250
-HEADERS = {"User-Agent": "JHU-Project/1.0 (spalit2@jh.edu)"}
+
+user_agent = Variable.get("LASTFM_USER_AGENT")
 api_key = Variable.get("LASTFM_API_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
+
+MAX_TAGS = 20
+TRACKS_PER_TAG = 250
+HEADERS = {"User-Agent": user_agent}
 
 
 # Gets last.fm top tags from tag.getTopTags endpoint

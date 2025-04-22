@@ -9,5 +9,5 @@
     "SPOTIFY_CLIENT_SECRET":"61ec80164ca14449a0588e4e64330fda",
     "AB_API_KEY":"W58BMbyL0v2YyL5R9ek7NJFTXvgieHRZtO6ehFUi",
     "LASTFM_Z_KEY": "785f1b57835250d3bec5b0c2682b32aa",
-    "LAST_FM_USER_AGENT": "JHU-Project/1.0 (zbarret1@jh.edu)"
+    "LASTFM_USER_AGENT": "JHU-Project/1.0 (zbarret1@jh.edu)"
 }

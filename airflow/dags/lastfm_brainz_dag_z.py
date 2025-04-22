@@ -23,12 +23,14 @@ default_args = {
     'retries': None
 }
 
-MAX_TAGS = 20
-TRACKS_PER_TAG = 150
-HEADERS = {"User-Agent": "JHU-Project/1.0 (zbarret1@jh.edu)"}
+
+user_agent = Variable.get("LASTFM_USER_AGENT")
 api_key = Variable.get("LASTFM_Z_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
+MAX_TAGS = 20
+TRACKS_PER_TAG = 150
+HEADERS = {"User-Agent": user_agent}
 
 def get_top_tags():
     print(f"Getting top {MAX_TAGS} tags from LastFM")
