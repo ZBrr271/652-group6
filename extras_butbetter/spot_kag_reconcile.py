@@ -1,3 +1,9 @@
+from airflow import DAG
+from airflow.operators.empty import EmptyOperator
+from airflow.providers.postgres.operators.postgres import PostgresOperator
+from airflow.operators.python_operator import PythonOperator, BranchPythonOperator
+from airflow.models import Variable
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 import pandas as pd
 from rapidfuzz import process, fuzz
 import numpy as np
@@ -7,16 +13,41 @@ from math import sqrt
 import os
 
 
-def append_match_result(results, spot_artists, spot_song_name, kag_artists, kag_song_name, 
-                       match_found, kag_index, spot_index, match_score, 
+def load_all_from_db():
+
+    pg_hook = PostgresHook(postgres_conn_id='pg_group6')
+
+    with pg_hook.get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM spotify_tracks")
+            df_spot = cur.fetch_all()
+
+            cur.execute("SELECT * FROM billboard_chart_data")
+            df_kag = cur.fetch_all()
+
+            cur.execute("SELECT * FROM lastfm_tracks")
+            df_lastfm = cur.fetch_all()
+
+            cur.execute("SELECT * FROM acousticbrainz_features")
+            df_ab = cur.fetch_all()
+
+    df_spot = pd.DataFrame(df_spot, columns=df_spot[0].keys())
+    df_kag = pd.DataFrame(df_kag, columns=df_kag[0].keys())
+    df_lastfm = pd.DataFrame(df_lastfm, columns=df_lastfm[0].keys())
+
+    return df_spot, df_kag, df_lastfm, df_ab
+
+
+def append_match_result(results, spot_artists, spot_song_name, other_artists, other_song_name, 
+                       match_found, other_index, spot_index, match_score, 
                        artist_match_pct, name_match_pct):
     results.append({
         'spot_artists': spot_artists,
         'spot_song_name': spot_song_name,
-        'kag_artists': kag_artists,
-        'kag_song_name': kag_song_name,
+        'other_artists': other_artists,
+        'other_song_name': other_song_name,
         'match_found': match_found,
-        'kag_index': kag_index,
+        'other_index': other_index,
         'spot_index': spot_index,
         'best_match_score': match_score,
         'best_match_artist_match_pct': artist_match_pct,
@@ -24,153 +55,209 @@ def append_match_result(results, spot_artists, spot_song_name, kag_artists, kag_
     })
     
 
-df_spot = pd.read_csv('data/spotify_tracks_cleaned_20250418_223654.csv', encoding='utf-8')
-df_kag = pd.read_csv('data/unique_hot100_20250418_222928.csv', encoding='utf-8')
+def match_spot_to_kag(df_spot, df_kag):
 
-df_kag = df_kag[df_kag['peak_chart_pos'] <= 10]
-# Reset index after filtering to avoid key errors
-df_kag = df_kag.reset_index(drop=True)
-print(f"Filtered Kaggle dataset to {len(df_kag)} records with peak chart position <= 10")
+    df_kag = df_kag[df_kag['peak_chart_pos'] <= 20]
+    df_kag = df_kag.reset_index(drop=True)
 
-df_kag['has_spot_match'] = False
-df_kag['spot_match_index'] = None
-df_spot['has_kag_match'] = False
-df_spot['kag_match_index'] = None
+    print(f"Filtered Kaggle dataset to {len(df_kag)} records with peak chart position <= 20")
 
-results = []
+    df_kag['has_spot_match'] = False
+    df_kag['spot_match_index'] = None
+    df_kag['exact_match'] = False
+    df_spot['has_kag_match'] = False
+    df_spot['kag_match_index'] = None
 
-start_time = time.time()
+    results = []
 
-kag_performers = set(df_kag['artists'].unique())
-performer_indices = {performer: df_kag[df_kag['artists'] == performer].index[0] 
-                     for performer in kag_performers}
+    start_time = time.time()
 
-performer_to_titles = {}
-for idx, row in df_kag.iterrows():
-    performer = row['artists']
-    title = row['song_name']
-    if performer not in performer_to_titles:
-        performer_to_titles[performer] = set()
-    performer_to_titles[performer].add(title)
+    kag_performers = set(df_kag['top_artist'].unique())
+    performer_indices = {performer: df_kag[df_kag['top_artist'] == performer].index[0] 
+                        for performer in kag_performers}
 
-kag_performer_title_to_index = {}
-for idx, row in df_kag.iterrows():
-    performer = row['artists']
-    title = row['song_name']
-    kag_performer_title_to_index[(performer, title)] = idx
+    performer_to_titles = {}
+    for idx, row in df_kag.iterrows():
+        performer = row['top_artist']
+        title = row['song_name']
+        if performer not in performer_to_titles:
+            performer_to_titles[performer] = set()
+        performer_to_titles[performer].add(title)
 
-# Pre-compute word sets
-kag_artist_words_dict = {idx: set(row['artists'].split()) for idx, row in df_kag.iterrows()}
-kag_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_kag.iterrows()}
+    kag_performer_title_to_index = {}
+    for idx, row in df_kag.iterrows():
+        performer = row['top_artist']
+        title = row['song_name']
+        kag_performer_title_to_index[(performer, title)] = idx
 
-# Create artist+first letter of title index
-artist_title_first = {}
-for idx, row in df_kag.iterrows():
-    if row['song_name']:
-        key = (row['artists'], row['song_name'][0])
-        if key not in artist_title_first:
-            artist_title_first[key] = []
-        artist_title_first[key].append(idx)
+    # Pre-compute word sets
+    kag_artist_words_dict = {idx: set(row['top_artist'].split()) for idx, row in df_kag.iterrows()}
+    kag_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_kag.iterrows()}
 
-for index, row in df_spot.iterrows():
-    if df_spot.at[index, 'has_kag_match']:
-        continue
+    # Create artist+first letter of title index
+    artist_title_first = {}
+    for idx, row in df_kag.iterrows():
+        if row['song_name']:
+            key = (row['top_artist'], row['song_name'][0])
+            if key not in artist_title_first:
+                artist_title_first[key] = []
+            artist_title_first[key].append(idx)
 
-    artist = row['artists']
-    song_name = row['song_name']
-    match_found = False
-
-    best_match_performer = None
-    best_match_title = None
-    best_match_score = 0
-    best_match_artist_match_pct = 0
-    best_match_name_match_pct = 0
-    best_match_kag_index = None
-
-    if index % 10 == 0:
-        print(f"Processing record {index + 1} of {len(df_spot)}...")
-    
-    if artist in kag_performers:
-        curr_performer = artist
-        
-        if song_name in performer_to_titles.get(curr_performer, set()):
-            kag_index = kag_performer_title_to_index.get((curr_performer, song_name))
-            best_match_kag_index = kag_index
-
-            # Update both dataframes
-            df_spot.at[index, 'has_kag_match'] = True
-            df_spot.at[index, 'kag_match_index'] = kag_index
-            df_kag.at[kag_index, 'has_spot_match'] = True
-            df_kag.at[kag_index, 'spot_match_index'] = index
-            
-            # Add to results with perfect scores
-            match_found = True
-            append_match_result(results, artist, song_name, curr_performer, song_name, 
-                                match_found, best_match_kag_index, index, 100, 100, 100)
+    for index, row in df_spot.iterrows():
+        if df_spot.at[index, 'has_kag_match']:
             continue
 
-        start_index = performer_indices[curr_performer]
+        artist = row['top_artist']
+        song_name = row['song_name']
+        match_found = False
 
-        for i in range(start_index, len(df_kag)):
+        best_match_performer = None
+        best_match_title = None
+        best_match_score = 0
+        best_match_artist_match_pct = 0
+        best_match_name_match_pct = 0
+        best_match_kag_index = None
 
-            if df_kag.at[i, 'has_spot_match']:
-                continue
+        if index % 10 == 0:
+            print(f"Processing record {index + 1} of {len(df_spot)}...")
+        
+        if artist in kag_performers:
+            curr_performer = artist
+            
+            if song_name in performer_to_titles.get(curr_performer, set()):
+                kag_index = kag_performer_title_to_index.get((curr_performer, song_name))
+                best_match_kag_index = kag_index
 
-            curr_performer = df_kag.iloc[i]['artists']
-            title = df_kag.iloc[i]['song_name']
-
-            if curr_performer[0] != artist[0]:
-                continue
-            if title[0] != song_name[0]:
-                continue
-
-            spot_artist_words = set(artist.split())
-            curr_artist_words = kag_artist_words_dict[i]
-            if not spot_artist_words.intersection(curr_artist_words):
-                continue 
-
-            spot_title_words = set(song_name.split())
-            curr_title_words = kag_title_words_dict[i]
-            if not spot_title_words.intersection(curr_title_words):
-                continue 
-
-
-            artist_score = fuzz.QRatio(artist, curr_performer)
-            if artist_score < 60:
-                continue
-            title_score = fuzz.QRatio(song_name, title)
-            if title_score < 60:
-                continue
-            geo_mean_score = sqrt(artist_score * title_score)
-
-            if geo_mean_score > best_match_score:
-                best_match_performer = curr_performer
-                best_match_title = title
-                best_match_score = geo_mean_score
-                best_match_artist_match_pct = artist_score
-                best_match_name_match_pct = title_score
-                best_match_kag_index = i
-
-            if geo_mean_score >= 70:
-                match_found = True
-
-                kag_index = i
+                # Update both dataframes
                 df_spot.at[index, 'has_kag_match'] = True
                 df_spot.at[index, 'kag_match_index'] = kag_index
                 df_kag.at[kag_index, 'has_spot_match'] = True
                 df_kag.at[kag_index, 'spot_match_index'] = index
+                df_kag.at[kag_index, 'exact_match'] = True
 
-                append_match_result(results, artist, song_name, curr_performer, title, 
-                                    match_found, best_match_kag_index, index, best_match_score,
-                                    best_match_artist_match_pct, best_match_name_match_pct)
-                break
+                match_found = True
+                append_match_result(results, artist, song_name, curr_performer, song_name, 
+                                    match_found, best_match_kag_index, index, 100, 100, 100)
+                continue
 
-        if not match_found:
-            for i in range(0, start_index):
+            start_index = performer_indices[curr_performer]
+
+            for i in range(start_index, len(df_kag)):
+
                 if df_kag.at[i, 'has_spot_match']:
                     continue
 
-                curr_performer = df_kag.iloc[i]['artists']
+                curr_performer = df_kag.iloc[i]['top_artist']
+                title = df_kag.iloc[i]['song_name']
+
+                if curr_performer[0] != artist[0]:
+                    continue
+                if title[0] != song_name[0]:
+                    continue
+
+                spot_artist_words = set(artist.split())
+                curr_artist_words = kag_artist_words_dict[i]
+                if not spot_artist_words.intersection(curr_artist_words):
+                    continue 
+
+                spot_title_words = set(song_name.split())
+                curr_title_words = kag_title_words_dict[i]
+                if not spot_title_words.intersection(curr_title_words):
+                    continue 
+
+
+                artist_score = fuzz.QRatio(artist, curr_performer)
+                if artist_score < 60:
+                    continue
+                title_score = fuzz.QRatio(song_name, title)
+                if title_score < 60:
+                    continue
+                geo_mean_score = sqrt(artist_score * title_score)
+
+                if geo_mean_score > best_match_score:
+                    best_match_performer = curr_performer
+                    best_match_title = title
+                    best_match_score = geo_mean_score
+                    best_match_artist_match_pct = artist_score
+                    best_match_name_match_pct = title_score
+                    best_match_kag_index = i
+
+                if geo_mean_score >= 70:
+                    match_found = True
+
+                    kag_index = i
+                    df_spot.at[index, 'has_kag_match'] = True
+                    df_spot.at[index, 'kag_match_index'] = kag_index
+                    df_kag.at[kag_index, 'has_spot_match'] = True
+                    df_kag.at[kag_index, 'spot_match_index'] = index
+
+                    append_match_result(results, artist, song_name, curr_performer, title, 
+                                        match_found, best_match_kag_index, index, best_match_score,
+                                        best_match_artist_match_pct, best_match_name_match_pct)
+                    break
+
+            if not match_found:
+                for i in range(0, start_index):
+                    if df_kag.at[i, 'has_spot_match']:
+                        continue
+
+                    curr_performer = df_kag.iloc[i]['top_artist']
+                    title = df_kag.iloc[i]['song_name']
+
+                    if curr_performer[0] != artist[0]:
+                        continue
+                    if title[0] != song_name[0]:
+                        continue
+
+                    spot_artist_words = set(artist.split())
+                    curr_artist_words = kag_artist_words_dict[i]
+                    if not spot_artist_words.intersection(curr_artist_words):
+                        continue 
+
+                    spot_title_words = set(song_name.split())
+                    curr_title_words = kag_title_words_dict[i]
+                    if not spot_title_words.intersection(curr_title_words):
+                        continue 
+
+                    artist_score = fuzz.QRatio(artist, curr_performer)
+                    if artist_score < 60:
+                        continue  # Skip early
+                    
+                    # Only calculate title score if artist score is promising
+                    title_score = fuzz.QRatio(song_name, title)
+                    if title_score < 60:
+                        continue  # Skip early
+
+                    geo_mean_score = sqrt(artist_score * title_score)
+
+                    if geo_mean_score > best_match_score:
+                        best_match_performer = curr_performer
+                        best_match_title = title
+                        best_match_score = geo_mean_score
+                        best_match_artist_match_pct = artist_score
+                        best_match_name_match_pct = title_score
+                        best_match_kag_index = i
+
+                    if geo_mean_score >= 70:
+                        match_found = True
+                        kag_index = i
+                        df_spot.at[index, 'has_kag_match'] = True
+                        df_spot.at[index, 'kag_match_index'] = kag_index
+                        df_kag.at[kag_index, 'has_spot_match'] = True
+                        df_kag.at[kag_index, 'spot_match_index'] = index
+
+
+                        append_match_result(results, artist, song_name, curr_performer, title, 
+                                            match_found, best_match_kag_index, index, best_match_score,
+                                            best_match_artist_match_pct, best_match_name_match_pct)
+                        break
+
+        else:
+            for i in range(0, len(df_kag)):
+                if df_kag.at[i, 'has_spot_match']:
+                    continue
+
+                curr_performer = df_kag.iloc[i]['top_artist']
                 title = df_kag.iloc[i]['song_name']
 
                 if curr_performer[0] != artist[0]:
@@ -190,13 +277,10 @@ for index, row in df_spot.iterrows():
 
                 artist_score = fuzz.QRatio(artist, curr_performer)
                 if artist_score < 60:
-                    continue  # Skip early
-                
-                # Only calculate title score if artist score is promising
+                    continue
                 title_score = fuzz.QRatio(song_name, title)
                 if title_score < 60:
-                    continue  # Skip early
-
+                    continue
                 geo_mean_score = sqrt(artist_score * title_score)
 
                 if geo_mean_score > best_match_score:
@@ -221,151 +305,330 @@ for index, row in df_spot.iterrows():
                                         best_match_artist_match_pct, best_match_name_match_pct)
                     break
 
-    else:
-        for i in range(0, len(df_kag)):
-            if df_kag.at[i, 'has_spot_match']:
+        if not match_found:
+            append_match_result(results, artist, song_name, best_match_performer, best_match_title, 
+                                match_found, best_match_kag_index, index, best_match_score,
+                                best_match_artist_match_pct, best_match_name_match_pct)
+
+    
+    for index, row in df_spot.iterrows():
+        if df_spot.at[index, 'has_kag_match']:
+            if df_spot.at[index, 'exact_match']:
                 continue
+            else:
+                df_kag.at[df_spot.at[index, 'kag_match_index'], 'group6_id'] = df_spot.at[index, 'group6_id']
 
-            curr_performer = df_kag.iloc[i]['artists']
-            title = df_kag.iloc[i]['song_name']
+    
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"\nTotal time taken for Spotify and Kaggle matching: {elapsed_time:.2f} seconds")
+    
+    results_df = pd.DataFrame(results)
+    results_df.sort_values(by=['best_match_score'], inplace=True)
+    results_df.reset_index(drop=True, inplace=True)
 
-            if curr_performer[0] != artist[0]:
-                continue
-            if title[0] != song_name[0]:
-                continue
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    match_results_file_name = f"spottokaggle_match_results_{timestamp}.csv"
+    data_dir = os.path.join(os.getcwd(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    match_results_file_path = os.path.join(data_dir, match_results_file_name)
+    results_df.to_csv(match_results_file_path, index=False)
 
-            spot_artist_words = set(artist.split())
-            curr_artist_words = kag_artist_words_dict[i]
-            if not spot_artist_words.intersection(curr_artist_words):
-                continue 
+    print(f"Successfully wrote to {match_results_file_name}\n")
 
-            spot_title_words = set(song_name.split())
-            curr_title_words = kag_title_words_dict[i]
-            if not spot_title_words.intersection(curr_title_words):
-                continue 
 
-            artist_score = fuzz.QRatio(artist, curr_performer)
-            if artist_score < 60:
-                continue
-            title_score = fuzz.QRatio(song_name, title)
-            if title_score < 60:
-                continue
-            geo_mean_score = sqrt(artist_score * title_score)
+    return df_spot, df_kag      
+                
 
-            if geo_mean_score > best_match_score:
-                best_match_performer = curr_performer
-                best_match_title = title
-                best_match_score = geo_mean_score
-                best_match_artist_match_pct = artist_score
-                best_match_name_match_pct = title_score
-                best_match_kag_index = i
+def match_spot_to_lastfm(df_spot, df_lastfm):
 
-            if geo_mean_score >= 70:
+    start_time = time.time()
+
+    df_lastfm['has_spot_match'] = False
+    df_lastfm['spot_match_index'] = None
+    df_lastfm['exact_match'] = False
+    df_spot['has_lastfm_match'] = False
+    df_spot['lastfm_match_index'] = None
+
+    results = []
+
+    start_time = time.time()
+
+    lastfm_artists = set(df_lastfm['artist'].unique())
+    artist_indices = {artist: df_lastfm[df_lastfm['artist'] == artist].index[0] 
+                        for artist in lastfm_artists}
+
+    artist_to_titles = {}
+    for idx, row in df_lastfm.iterrows():
+        artist = row['artist']
+        title = row['song_name']
+        if artist not in artist_to_titles:
+            artist_to_titles[artist] = set()
+        artist_to_titles[artist].add(title)
+
+    lastfm_artist_title_to_index = {}
+    for idx, row in df_lastfm.iterrows():
+        artist = row['artist']
+        title = row['song_name']
+        lastfm_artist_title_to_index[(artist, title)] = idx
+
+    # Pre-compute word sets
+    lastfm_artist_words_dict = {idx: set(row['artist'].split()) for idx, row in df_lastfm.iterrows()}
+    lastfm_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_lastfm.iterrows()}
+
+    # Create artist+first letter of title index
+    artist_title_first = {}
+    for idx, row in df_lastfm.iterrows():
+        if row['song_name']:
+            key = (row['artist'], row['song_name'][0])
+            if key not in artist_title_first:
+                artist_title_first[key] = []
+            artist_title_first[key].append(idx)
+
+    for index, row in df_spot.iterrows():
+        if df_spot.at[index, 'has_lastfm_match']:
+            continue
+
+        artist = row['top_artist']
+        song_name = row['song_name']
+        match_found = False
+
+        best_match_performer = None
+        best_match_title = None
+        best_match_score = 0
+        best_match_artist_match_pct = 0
+        best_match_name_match_pct = 0
+        best_match_kag_index = None
+
+        if index % 10 == 0:
+            print(f"Processing record {index + 1} of {len(df_spot)}...")
+        
+        if artist in lastfm_artists:
+            curr_artist = artist
+            
+            if song_name in artist_to_titles.get(curr_artist, set()):
+                lastfm_index = lastfm_artist_title_to_index.get((curr_artist, song_name))
+                best_match_lastfm_index = lastfm_index
+
+                # Update both dataframes
+                df_spot.at[index, 'has_lastfm_match'] = True
+                df_spot.at[index, 'lastfm_match_index'] = lastfm_index
+                df_lastfm.at[lastfm_index, 'has_spot_match'] = True
+                df_lastfm.at[lastfm_index, 'spot_match_index'] = index
+                df_lastfm.at[lastfm_index, 'exact_match'] = True
+
                 match_found = True
-                kag_index = i
-                df_spot.at[index, 'has_kag_match'] = True
-                df_spot.at[index, 'kag_match_index'] = kag_index
-                df_kag.at[kag_index, 'has_spot_match'] = True
-                df_kag.at[kag_index, 'spot_match_index'] = index
+                append_match_result(results, artist, song_name, curr_artist, song_name, 
+                                    match_found, best_match_lastfm_index, index, 100, 100, 100)
+                continue
+
+            start_index = artist_indices[curr_artist]
+
+            for i in range(start_index, len(df_lastfm)):
+
+                if df_lastfm.at[i, 'has_spot_match']:
+                    continue
+
+                curr_artist = df_lastfm.iloc[i]['artist']
+                title = df_lastfm.iloc[i]['song_name']
+
+                if curr_artist[0] != artist[0]:
+                    continue
+                if title[0] != song_name[0]:
+                    continue
+
+                spot_artist_words = set(artist.split())
+                curr_artist_words = lastfm_artist_words_dict[i]
+                if not spot_artist_words.intersection(curr_artist_words):
+                    continue 
+
+                spot_title_words = set(song_name.split())
+                curr_title_words = lastfm_title_words_dict[i]
+                if not spot_title_words.intersection(curr_title_words):
+                    continue 
 
 
-                append_match_result(results, artist, song_name, curr_performer, title, 
-                                    match_found, best_match_kag_index, index, best_match_score,
-                                    best_match_artist_match_pct, best_match_name_match_pct)
-                break
+                artist_score = fuzz.QRatio(artist, curr_artist)
+                if artist_score < 60:
+                    continue
+                title_score = fuzz.QRatio(song_name, title)
+                if title_score < 60:
+                    continue
+                geo_mean_score = sqrt(artist_score * title_score)
 
-    if not match_found:
-        append_match_result(results, artist, song_name, best_match_performer, best_match_title, 
-                            match_found, best_match_kag_index, index, best_match_score,
-                            best_match_artist_match_pct, best_match_name_match_pct)
+                if geo_mean_score > best_match_score:
+                    best_match_performer = curr_artist
+                    best_match_title = title
+                    best_match_score = geo_mean_score
+                    best_match_artist_match_pct = artist_score
+                    best_match_name_match_pct = title_score
+                    best_match_lastfm_index = i
+
+                if geo_mean_score >= 70:
+                    match_found = True
+
+                    lastfm_index = i
+                    df_spot.at[index, 'has_lastfm_match'] = True
+                    df_spot.at[index, 'lastfm_match_index'] = lastfm_index
+                    df_lastfm.at[lastfm_index, 'has_spot_match'] = True
+                    df_lastfm.at[lastfm_index, 'spot_match_index'] = index
+
+                    append_match_result(results, artist, song_name, curr_artist, title, 
+                                        match_found, best_match_lastfm_index, index, best_match_score,
+                                        best_match_artist_match_pct, best_match_name_match_pct)
+                    break
+
+            if not match_found:
+                for i in range(0, start_index):
+                    if df_lastfm.at[i, 'has_spot_match']:
+                        continue
+
+                    curr_artist = df_lastfm.iloc[i]['artist']
+                    title = df_lastfm.iloc[i]['song_name']
+
+                    if curr_artist[0] != artist[0]:
+                        continue
+                    if title[0] != song_name[0]:
+                        continue
+
+                    spot_artist_words = set(artist.split())
+                    curr_artist_words = lastfm_artist_words_dict[i]
+                    if not spot_artist_words.intersection(curr_artist_words):
+                        continue 
+
+                    spot_title_words = set(song_name.split())
+                    curr_title_words = lastfm_title_words_dict[i]
+                    if not spot_title_words.intersection(curr_title_words):
+                        continue 
+
+                    artist_score = fuzz.QRatio(artist, curr_artist)
+                    if artist_score < 60:
+                        continue  # Skip early
+                    
+                    # Only calculate title score if artist score is promising
+                    title_score = fuzz.QRatio(song_name, title)
+                    if title_score < 60:
+                        continue  # Skip early
+
+                    geo_mean_score = sqrt(artist_score * title_score)
+
+                    if geo_mean_score > best_match_score:
+                        best_match_performer = curr_artist
+                        best_match_title = title
+                        best_match_score = geo_mean_score
+                        best_match_artist_match_pct = artist_score
+                        best_match_name_match_pct = title_score
+                        best_match_lastfm_index = i
+
+                    if geo_mean_score >= 70:
+                        match_found = True
+                        lastfm_index = i
+                        df_spot.at[index, 'has_lastfm_match'] = True
+                        df_spot.at[index, 'lastfm_match_index'] = lastfm_index
+                        df_lastfm.at[lastfm_index, 'has_spot_match'] = True
+                        df_lastfm.at[lastfm_index, 'spot_match_index'] = index
+
+
+                        append_match_result(results, artist, song_name, curr_artist, title, 
+                                            match_found, best_match_lastfm_index, index, best_match_score,
+                                            best_match_artist_match_pct, best_match_name_match_pct)
+                        break
+
+        else:
+            for i in range(0, len(df_lastfm)):
+                if df_lastfm.at[i, 'has_spot_match']:
+                    continue
+
+                curr_artist = df_lastfm.iloc[i]['artist']
+                title = df_lastfm.iloc[i]['song_name']
+
+                if curr_artist[0] != artist[0]:
+                    continue
+                if title[0] != song_name[0]:
+                    continue
+
+                spot_artist_words = set(artist.split())
+                curr_artist_words = lastfm_artist_words_dict[i]
+                if not spot_artist_words.intersection(curr_artist_words):
+                    continue 
+
+                spot_title_words = set(song_name.split())
+                curr_title_words = lastfm_title_words_dict[i]
+                if not spot_title_words.intersection(curr_title_words):
+                    continue 
+
+                artist_score = fuzz.QRatio(artist, curr_artist)
+                if artist_score < 60:
+                    continue
+                title_score = fuzz.QRatio(song_name, title)
+                if title_score < 60:
+                    continue
+                geo_mean_score = sqrt(artist_score * title_score)
+
+                if geo_mean_score > best_match_score:
+                    best_match_performer = curr_artist
+                    best_match_title = title
+                    best_match_score = geo_mean_score
+                    best_match_artist_match_pct = artist_score
+                    best_match_name_match_pct = title_score
+                    best_match_lastfm_index = i
+
+                if geo_mean_score >= 70:
+                    match_found = True
+                    lastfm_index = i
+                    df_spot.at[index, 'has_lastfm_match'] = True
+                    df_spot.at[index, 'lastfm_match_index'] = lastfm_index
+                    df_lastfm.at[lastfm_index, 'has_spot_match'] = True
+                    df_lastfm.at[lastfm_index, 'spot_match_index'] = index
+
+
+                    append_match_result(results, artist, song_name, curr_artist, title, 
+                                        match_found, best_match_lastfm_index, index, best_match_score,
+                                        best_match_artist_match_pct, best_match_name_match_pct)
+                    break
+
+        if not match_found:
+            append_match_result(results, artist, song_name, best_match_performer, best_match_title, 
+                                match_found, best_match_lastfm_index, index, best_match_score,
+                                best_match_artist_match_pct, best_match_name_match_pct)
+
+    
+    for index, row in df_spot.iterrows():
+        if df_spot.at[index, 'has_lastfm_match']:
+            if df_spot.at[index, 'exact_match']:
+                continue
+            else:
+                df_lastfm.at[df_spot.at[index, 'lastfm_match_index'], 'group6_id'] = df_spot.at[index, 'group6_id']
+
+
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"\nTotal time taken for Spotify and LastFM matching: {elapsed_time:.2f} seconds")
+
+    results_df = pd.DataFrame(results)
+    results_df.sort_values(by=['best_match_score'], inplace=True)
+    results_df.reset_index(drop=True, inplace=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    match_results_file_name = f"spottolastfm_match_results_{timestamp}.csv"
+    data_dir = os.path.join(os.getcwd(), 'data')
+    os.makedirs(data_dir, exist_ok=True)
+    match_results_file_path = os.path.join(data_dir, match_results_file_name)
+    results_df.to_csv(match_results_file_path, index=False)
+
+    print(f"Successfully wrote to {match_results_file_name}\n")
 
 
 
-end_time = time.time()
-elapsed_time = end_time - start_time
-print(f"\nTotal time taken for processing: {elapsed_time:.2f} seconds")
+def match_all_tracks():
+    df_spot, df_kag, df_lastfm, df_ab = load_all_from_db()
 
+    df_spot, df_kag = match_spot_to_kag(df_spot, df_kag)
 
-results_df = pd.DataFrame(results)
-results_df.sort_values(by=['best_match_score'], inplace=True)
-results_df.reset_index(drop=True, inplace=True)
+    df_spot, df_lastfm = match_spot_to_lastfm(df_spot, df_lastfm)
 
-# Create and assign common track IDs
-print("Creating common track IDs across datasets...")
-
-# Add track_common_id column to both dataframes
-df_spot['track_common_id'] = None
-df_kag['track_common_id'] = None
-
-# Generate UUID-like unique IDs
-track_id_counter = 1
-track_id_mapping = {}  # To track which tracks have already been assigned IDs
-
-# First, process matches - they should share the same ID
-for _, row in results_df.iterrows():
-    if row['match_found']:
-        spot_idx = row['spot_index']
-        kag_idx = row['kag_index']
-        
-        # Generate a unique ID if neither track has one yet
-        track_id = f"TRACK_{track_id_counter:06d}"
-        track_id_counter += 1
-        
-        # Assign the same ID to both the Spotify and Kaggle tracks
-        df_spot.at[spot_idx, 'track_common_id'] = track_id
-        df_kag.at[kag_idx, 'track_common_id'] = track_id
-        
-        # Remember this assignment
-        track_id_mapping[('spotify', spot_idx)] = track_id
-        track_id_mapping[('kaggle', kag_idx)] = track_id
-
-# Then, handle any unmatched tracks
-for idx in range(len(df_spot)):
-    if df_spot.at[idx, 'track_common_id'] is None:
-        track_id = f"TRACK_{track_id_counter:06d}"
-        track_id_counter += 1
-        df_spot.at[idx, 'track_common_id'] = track_id
-        track_id_mapping[('spotify', idx)] = track_id
-
-for idx in range(len(df_kag)):
-    if df_kag.at[idx, 'track_common_id'] is None:
-        track_id = f"TRACK_{track_id_counter:06d}"
-        track_id_counter += 1
-        df_kag.at[idx, 'track_common_id'] = track_id
-        track_id_mapping[('kaggle', idx)] = track_id
-
-# Save this mapping for future use with Last.fm
-mapping_df = pd.DataFrame([
-    {'source': source, 'source_index': idx, 'track_common_id': track_id}
-    for (source, idx), track_id in track_id_mapping.items()
-])
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-match_results_file_name = f"match_results_{timestamp}.csv"
-mapping_file_name = f"track_id_mapping_{timestamp}.csv"
-spot_file_name = f"spotify_with_common_ids_{timestamp}.csv"
-kag_file_name = f"kaggle_with_common_ids_{timestamp}.csv"
-
-data_dir = os.path.join(os.getcwd(), 'data')
-os.makedirs(data_dir, exist_ok=True)
-
-# Save all files
-match_results_file_path = os.path.join(data_dir, match_results_file_name)
-mapping_file_path = os.path.join(data_dir, mapping_file_name)
-spot_file_path = os.path.join(data_dir, spot_file_name)
-kag_file_path = os.path.join(data_dir, kag_file_name)
-
-results_df.to_csv(match_results_file_path, index=False, encoding='utf-8-sig')
-mapping_df.to_csv(mapping_file_path, index=False, encoding='utf-8-sig')
-df_spot.to_csv(spot_file_path, index=False, encoding='utf-8-sig')
-df_kag.to_csv(kag_file_path, index=False, encoding='utf-8-sig')
-
-print(f"Successfully wrote to {match_results_file_name}\n")
-print(f"Created and saved track ID mapping to {mapping_file_name}")
-print(f"Saved Spotify tracks with common IDs to {spot_file_name}")
-print(f"Saved Kaggle tracks with common IDs to {kag_file_name}")
-print(f"Generated {track_id_counter-1} unique track IDs")
-
+    
+match_all_tracks()
 
 
 

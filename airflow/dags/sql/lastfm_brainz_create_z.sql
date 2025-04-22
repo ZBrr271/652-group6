@@ -16,7 +16,7 @@ CREATE TABLE lastfm_top_tags (
 
 -- create table for acousticbrainz features
 CREATE TABLE acousticbrainz_features (
-    mbid TEXT,
+    mbid TEXT PRIMARY KEY,
     group6_id TEXT,
     artist JSONB,
     song_name JSONB,

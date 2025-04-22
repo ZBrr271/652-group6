@@ -32,7 +32,8 @@ RUN pip install apache-airflow[celery]==2.8.4 \
     numpy \
     requests \
     kaggle \
-    fuzzywuzzy
+    fuzzywuzzy \
+    rapidfuzz
 
 # Set up directories for Airflow
 RUN mkdir -p $AIRFLOW_HOME $AIRFLOW_HOME/dags && \
