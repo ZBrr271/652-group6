@@ -1,13 +1,11 @@
 {
-    "LASTFM_API_KEY":"f35ca57df799d71fa75bcaeb13322fb6",
+    "LASTFM_API_KEY":"785f1b57835250d3bec5b0c2682b32aa",
     "LASTFM_BASE_URL":"http://ws.audioscrobbler.com/2.0/",
-    "AB_BASE_URL":"https://acousticbrainz.org",
-    "MB_BASE_URL":"https://musicbrainz.org/ws/2",
+    "LASTFM_USER_AGENT": "JHU-Project/1.0 (zbarret1@jh.edu)",
     "KAG_USERNAME":"zmbarrett",
     "KAG_KEY":"eca1fde2463f087bbeea1ee3b57d4400",
     "SPOTIFY_CLIENT_ID":"d2d5bf12b79f4947be8568a2a4105a93",
     "SPOTIFY_CLIENT_SECRET":"61ec80164ca14449a0588e4e64330fda",
-    "AB_API_KEY":"W58BMbyL0v2YyL5R9ek7NJFTXvgieHRZtO6ehFUi",
-    "LASTFM_Z_KEY": "785f1b57835250d3bec5b0c2682b32aa",
-    "LASTFM_USER_AGENT": "JHU-Project/1.0 (zbarret1@jh.edu)"
+    "AB_BASE_URL":"https://acousticbrainz.org",
+    "MB_BASE_URL":"https://musicbrainz.org/ws/2"
 }

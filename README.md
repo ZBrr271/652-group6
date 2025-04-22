@@ -2,6 +2,18 @@
 # NOTE - REFER TO THE PROJECT WRITEUP FOR GENERAL INSTRUCTIONS FIRST
 # AND REFER TO DETAILED INSTRUCTIONS HERE AS REQUIRED
 
+# See the folder labeled documentation for writeup, ERD, and
+# Example CSV's that you should expect to see generated from DAGs
+
+# docker container notes
+# If there are issues in docker desktop, then just make sure you're in project repo, and run
+# docker-compose down -v
+# docker-compose up --build -d
+# Make sure your jhu_docker is off before you run the commands
+
+# Recommended dag sequence - kaggle_dag, spotify_dag, and lasfm_brainz_dag in any order
+# Then you can optionally run the matching_dag, but it's slow
+
 A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API. Currently configured to collect music data from LastFM's API.
 
 ## Architecture

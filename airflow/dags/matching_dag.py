@@ -1,3 +1,13 @@
+# 685.652, Spring 2025 - Group 6 Final Project
+# matching_dag.py
+
+# Matches up closely related tracks
+# From different datasets
+# Using fuzzy string matching
+# And overrides group6_id based on findings
+
+
+
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -25,7 +35,7 @@ default_args = {
 }
 
 
-
+# Bring data from all existing tables in
 def load_all_from_db():
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
 
@@ -54,7 +64,7 @@ def load_all_from_db():
 
     return df_spot, df_kag, df_lastfm, df_ab
 
-
+# Helper for match functions
 def append_match_result(results, spot_artists, spot_song_name, other_artists, other_song_name, 
                        match_found, other_index, spot_index, match_score, 
                        artist_match_pct, name_match_pct):
@@ -72,37 +82,43 @@ def append_match_result(results, spot_artists, spot_song_name, other_artists, ot
     })
     
 
+
+# Match spotify tracks to kaggle tracks
+# Overwrite group6_id based on findings
 def match_spot_to_kag(df_spot, df_kag):
 
+    # Store the original dataframe before filtering
+    df_kag_original = df_kag.copy()
+
     # To decrease matching time, filter out songs
-    # That didn't make top 25
+    # That didn't reach a certain chart position
     # Because fuzzy string matching is slow
-    KAG_FILTER = 25
+    KAG_FILTER = 15
+    df_kag_filtered = df_kag[df_kag['peak_chart_pos'] <= KAG_FILTER]
+    df_kag_filtered = df_kag_filtered.reset_index()  # Keep original index in 'index' column
 
-    df_kag = df_kag[df_kag['peak_chart_pos'] <= KAG_FILTER]
-    df_kag = df_kag.reset_index(drop=True)
-
-    print(f"Filtered Kaggle dataset to {len(df_kag)} records with peak chart position <= {KAG_FILTER}")
+    print(f"Filtered Kaggle dataset to {len(df_kag_filtered)} records with peak chart position <= {KAG_FILTER}")
     print(f"Will search for matches within the {len(df_spot)} Spotify records")
     print(f"This may take a while...")
 
-    df_kag['has_spot_match'] = False
-    df_kag['spot_match_index'] = None
-    df_kag['exact_match'] = False
+    # Will be used to track matches
+    df_kag_filtered['has_spot_match'] = False
+    df_kag_filtered['spot_match_index'] = None
+    df_kag_filtered['exact_match'] = False
     df_spot['has_kag_match'] = False
     df_spot['kag_match_index'] = None
-
 
     results = []
 
     start_time = time.time()
 
-    kag_performers = set(df_kag['top_artist'].unique())
-    performer_indices = {performer: df_kag[df_kag['top_artist'] == performer].index[0] 
+    # Pre-compute data for faster matching
+    kag_performers = set(df_kag_filtered['top_artist'].unique())
+    performer_indices = {performer: df_kag_filtered[df_kag_filtered['top_artist'] == performer].index[0] 
                         for performer in kag_performers}
 
     performer_to_titles = {}
-    for idx, row in df_kag.iterrows():
+    for idx, row in df_kag_filtered.iterrows():
         performer = row['top_artist']
         title = row['song_name']
         if performer not in performer_to_titles:
@@ -110,31 +126,42 @@ def match_spot_to_kag(df_spot, df_kag):
         performer_to_titles[performer].add(title)
 
     kag_performer_title_to_index = {}
-    for idx, row in df_kag.iterrows():
+    for idx, row in df_kag_filtered.iterrows():
         performer = row['top_artist']
         title = row['song_name']
         kag_performer_title_to_index[(performer, title)] = idx
 
     # Pre-compute word sets
-    kag_artist_words_dict = {idx: set(row['top_artist'].split()) for idx, row in df_kag.iterrows()}
-    kag_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_kag.iterrows()}
+    kag_artist_words_dict = {idx: set(row['top_artist'].split()) for idx, row in df_kag_filtered.iterrows()}
+    kag_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_kag_filtered.iterrows()}
+
+    # Pre-compute Spotify artist and title word sets
+    spot_artist_words_dict = {idx: set(row['top_artist'].split()) for idx, row in df_spot.iterrows()}
+    spot_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_spot.iterrows()}
 
     # Create artist+first letter of title index
     artist_title_first = {}
-    for idx, row in df_kag.iterrows():
+    for idx, row in df_kag_filtered.iterrows():
         if row['song_name']:
             key = (row['top_artist'], row['song_name'][0])
             if key not in artist_title_first:
                 artist_title_first[key] = []
             artist_title_first[key].append(idx)
 
+    # Iterate through each spotify track
     for index, row in df_spot.iterrows():
+
+        # If there is already a match, skip
         if df_spot.at[index, 'has_kag_match']:
             continue
 
         artist = row['top_artist']
         song_name = row['song_name']
         match_found = False
+
+        # Get pre-computed word sets for this Spotify track
+        spot_artist_words = spot_artist_words_dict[index]
+        spot_title_words = spot_title_words_dict[index]
 
         best_match_performer = None
         best_match_title = None
@@ -143,62 +170,78 @@ def match_spot_to_kag(df_spot, df_kag):
         best_match_name_match_pct = 0
         best_match_kag_index = None
 
+        # Print progress every 10 records
         if index % 10 == 0:
             print(f"Processing record {index + 1} of {len(df_spot)}...")
         
         if artist in kag_performers:
             curr_performer = artist
             
+            # If the song name is in the performer's title set,
+            # Then it is an exact match
+            # These will already have the same group6_id
             if song_name in performer_to_titles.get(curr_performer, set()):
-                kag_index = kag_performer_title_to_index.get((curr_performer, song_name))
-                best_match_kag_index = kag_index
+                filtered_kag_index = kag_performer_title_to_index.get((curr_performer, song_name))
+                # Get the original index from the filtered dataframe
+                original_kag_index = df_kag_filtered.at[filtered_kag_index, 'index']
+                best_match_kag_index = filtered_kag_index
 
                 # Update both dataframes
                 df_spot.at[index, 'has_kag_match'] = True
-                df_spot.at[index, 'kag_match_index'] = kag_index
-                df_kag.at[kag_index, 'has_spot_match'] = True
-                df_kag.at[kag_index, 'spot_match_index'] = index
-                df_kag.at[kag_index, 'exact_match'] = True
+                df_spot.at[index, 'kag_match_index'] = original_kag_index
+                df_kag_filtered.at[filtered_kag_index, 'has_spot_match'] = True
+                df_kag_filtered.at[filtered_kag_index, 'spot_match_index'] = index
+                df_kag_filtered.at[filtered_kag_index, 'exact_match'] = True
 
                 match_found = True
                 append_match_result(results, artist, song_name, curr_performer, song_name, 
-                                    match_found, best_match_kag_index, index, 100, 100, 100)
+                                    match_found, original_kag_index, index, 100, 100, 100)
                 continue
 
+            # Start from that artist's first appearance in the dataset
+            # For better likelihood of quick match
             start_index = performer_indices[curr_performer]
+            for i in range(start_index, len(df_kag_filtered)):
 
-            for i in range(start_index, len(df_kag)):
-
-                if df_kag.at[i, 'has_spot_match']:
+                # If there is already a match, skip
+                if df_kag_filtered.at[i, 'has_spot_match']:
                     continue
 
-                curr_performer = df_kag.iloc[i]['top_artist']
-                title = df_kag.iloc[i]['song_name']
+                # Get the current top artist and title
+                curr_performer = df_kag_filtered.iloc[i]['top_artist']
+                title = df_kag_filtered.iloc[i]['song_name']
 
+                # If the first letter of the artist or title doesn't match, skip
                 if curr_performer[0] != artist[0]:
                     continue
                 if title[0] != song_name[0]:
                     continue
 
-                spot_artist_words = set(artist.split())
+                # If the artist words don't intersect, skip
                 curr_artist_words = kag_artist_words_dict[i]
                 if not spot_artist_words.intersection(curr_artist_words):
                     continue 
 
-                spot_title_words = set(song_name.split())
+                # If the title words don't intersect, skip
                 curr_title_words = kag_title_words_dict[i]
                 if not spot_title_words.intersection(curr_title_words):
                     continue 
 
-
+                # Check QRatio fuzzy match for artist and title
+                # Skip if either is very low
                 artist_score = fuzz.QRatio(artist, curr_performer)
                 if artist_score < 50:
                     continue
                 title_score = fuzz.QRatio(song_name, title)
                 if title_score < 50:
                     continue
+
+                # Geometric mean is good - penalizes one very low score more
                 geo_mean_score = sqrt(artist_score * title_score)
 
+                # If the fuzzy match is better than the current best, update
+                # This block was mostly for testing
+                # To find the right threshold for a good match
                 if geo_mean_score > best_match_score:
                     best_match_performer = curr_performer
                     best_match_title = title
@@ -207,39 +250,44 @@ def match_spot_to_kag(df_spot, df_kag):
                     best_match_name_match_pct = title_score
                     best_match_kag_index = i
 
+                # If the fuzzy match is close enough,
+                # Then it is a match
                 if geo_mean_score >= 70:
                     match_found = True
-
-                    kag_index = i
+                    
+                    filtered_kag_index = i
+                    original_kag_index = df_kag_filtered.at[filtered_kag_index, 'index']
+                    
                     df_spot.at[index, 'has_kag_match'] = True
-                    df_spot.at[index, 'kag_match_index'] = kag_index
-                    df_kag.at[kag_index, 'has_spot_match'] = True
-                    df_kag.at[kag_index, 'spot_match_index'] = index
+                    df_spot.at[index, 'kag_match_index'] = original_kag_index
+                    df_kag_filtered.at[filtered_kag_index, 'has_spot_match'] = True
+                    df_kag_filtered.at[filtered_kag_index, 'spot_match_index'] = index
 
                     append_match_result(results, artist, song_name, curr_performer, title, 
-                                        match_found, best_match_kag_index, index, best_match_score,
+                                        match_found, original_kag_index, index, best_match_score,
                                         best_match_artist_match_pct, best_match_name_match_pct)
                     break
 
+            # Need to wrap back around and keep looking
+            # Back to the start index
+            # All else in this block is the same
             if not match_found:
                 for i in range(0, start_index):
-                    if df_kag.at[i, 'has_spot_match']:
+                    if df_kag_filtered.at[i, 'has_spot_match']:
                         continue
 
-                    curr_performer = df_kag.iloc[i]['top_artist']
-                    title = df_kag.iloc[i]['song_name']
+                    curr_performer = df_kag_filtered.iloc[i]['top_artist']
+                    title = df_kag_filtered.iloc[i]['song_name']
 
                     if curr_performer[0] != artist[0]:
                         continue
                     if title[0] != song_name[0]:
                         continue
 
-                    spot_artist_words = set(artist.split())
                     curr_artist_words = kag_artist_words_dict[i]
                     if not spot_artist_words.intersection(curr_artist_words):
                         continue 
 
-                    spot_title_words = set(song_name.split())
                     curr_title_words = kag_title_words_dict[i]
                     if not spot_title_words.intersection(curr_title_words):
                         continue 
@@ -265,37 +313,39 @@ def match_spot_to_kag(df_spot, df_kag):
 
                     if geo_mean_score >= 70:
                         match_found = True
-                        kag_index = i
+                        
+                        filtered_kag_index = i
+                        original_kag_index = df_kag_filtered.at[filtered_kag_index, 'index']
+                        
                         df_spot.at[index, 'has_kag_match'] = True
-                        df_spot.at[index, 'kag_match_index'] = kag_index
-                        df_kag.at[kag_index, 'has_spot_match'] = True
-                        df_kag.at[kag_index, 'spot_match_index'] = index
-
+                        df_spot.at[index, 'kag_match_index'] = original_kag_index
+                        df_kag_filtered.at[filtered_kag_index, 'has_spot_match'] = True
+                        df_kag_filtered.at[filtered_kag_index, 'spot_match_index'] = index
 
                         append_match_result(results, artist, song_name, curr_performer, title, 
-                                            match_found, best_match_kag_index, index, best_match_score,
+                                            match_found, original_kag_index, index, best_match_score,
                                             best_match_artist_match_pct, best_match_name_match_pct)
                         break
 
+        # This is all the same as above
+        # Just for artists that don't have an exact match between datasets
         else:
-            for i in range(0, len(df_kag)):
-                if df_kag.at[i, 'has_spot_match']:
+            for i in range(0, len(df_kag_filtered)):
+                if df_kag_filtered.at[i, 'has_spot_match']:
                     continue
 
-                curr_performer = df_kag.iloc[i]['top_artist']
-                title = df_kag.iloc[i]['song_name']
+                curr_performer = df_kag_filtered.iloc[i]['top_artist']
+                title = df_kag_filtered.iloc[i]['song_name']
 
                 if curr_performer[0] != artist[0]:
                     continue
                 if title[0] != song_name[0]:
                     continue
 
-                spot_artist_words = set(artist.split())
                 curr_artist_words = kag_artist_words_dict[i]
                 if not spot_artist_words.intersection(curr_artist_words):
                     continue 
 
-                spot_title_words = set(song_name.split())
                 curr_title_words = kag_title_words_dict[i]
                 if not spot_title_words.intersection(curr_title_words):
                     continue 
@@ -318,37 +368,44 @@ def match_spot_to_kag(df_spot, df_kag):
 
                 if geo_mean_score >= 70:
                     match_found = True
-                    kag_index = i
+                    
+                    filtered_kag_index = i
+                    original_kag_index = df_kag_filtered.at[filtered_kag_index, 'index']
+                    
                     df_spot.at[index, 'has_kag_match'] = True
-                    df_spot.at[index, 'kag_match_index'] = kag_index
-                    df_kag.at[kag_index, 'has_spot_match'] = True
-                    df_kag.at[kag_index, 'spot_match_index'] = index
-
+                    df_spot.at[index, 'kag_match_index'] = original_kag_index
+                    df_kag_filtered.at[filtered_kag_index, 'has_spot_match'] = True
+                    df_kag_filtered.at[filtered_kag_index, 'spot_match_index'] = index
 
                     append_match_result(results, artist, song_name, curr_performer, title, 
-                                        match_found, best_match_kag_index, index, best_match_score,
+                                        match_found, original_kag_index, index, best_match_score,
                                         best_match_artist_match_pct, best_match_name_match_pct)
                     break
 
-        if not match_found:
+        if not match_found and best_match_kag_index is not None:
+            original_kag_index = df_kag_filtered.at[best_match_kag_index, 'index'] if best_match_kag_index is not None else None
+            append_match_result(results, artist, song_name, best_match_performer, best_match_title, 
+                                match_found, original_kag_index, index, best_match_score,
+                                best_match_artist_match_pct, best_match_name_match_pct)
+        elif not match_found:
             append_match_result(results, artist, song_name, best_match_performer, best_match_title, 
                                 match_found, best_match_kag_index, index, best_match_score,
                                 best_match_artist_match_pct, best_match_name_match_pct)
 
-    
+    # After all matches are found,
+    # Update the original dataframe with the match information
     for index, row in df_spot.iterrows():
-        if df_spot.at[index, 'has_kag_match']:
-            kag_index = df_spot.at[index, 'kag_match_index']
-            if df_kag.at[kag_index, 'exact_match']:
-                continue
-            else:
-                df_kag.at[kag_index, 'group6_id'] = df_spot.at[index, 'group6_id']
-
+        if row['has_kag_match'] and pd.notna(row['kag_match_index']):
+            original_kag_index = int(row['kag_match_index'])
+            if 0 <= original_kag_index < len(df_kag):  # Validate index
+                df_kag.at[original_kag_index, 'group6_id'] = row['group6_id']
     
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"\nTotal time taken for Spotify and Kaggle matching: {elapsed_time:.2f} seconds")
     
+
+    # Write to CSV for viewing results
     results_df = pd.DataFrame(results)
     results_df.sort_values(by=['best_match_score'], ascending=False, inplace=True)
     results_df.reset_index(drop=True, inplace=True)
@@ -367,11 +424,28 @@ def match_spot_to_kag(df_spot, df_kag):
 
 
 
-
+# All the same as above
+# Just between spotify and lastfm
 def match_spot_to_lastfm(df_spot, df_lastfm):
 
     start_time = time.time()
 
+    # Check for exact matches first based on UUID algorithm
+    # This ensures we don't lose exact matches that already exist
+    exact_match_count = 0
+    for idx_spot, row_spot in df_spot.iterrows():
+        spot_id = row_spot['group6_id']
+        # Look for exact UUID matches in lastfm
+        for idx_lastfm, row_lastfm in df_lastfm.iterrows():
+            lastfm_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row_lastfm['song_name'].strip() + row_lastfm['artist'].strip())))
+            if spot_id == lastfm_id:
+                # This is an exact match based on UUID calculation
+                df_lastfm.at[idx_lastfm, 'group6_id'] = spot_id
+                exact_match_count += 1
+    
+    print(f"Found {exact_match_count} exact UUID matches between Spotify and LastFM")
+
+    # Continue with fuzzy matching for the rest
     df_lastfm['has_spot_match'] = False
     df_lastfm['spot_match_index'] = None
     df_lastfm['exact_match'] = False
@@ -380,8 +454,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
 
     results = []
 
-    start_time = time.time()
-
+    # Pre-compute word sets for faster matching
     lastfm_artists = set(df_lastfm['artist'].unique())
     artist_indices = {artist: df_lastfm[df_lastfm['artist'] == artist].index[0] 
                         for artist in lastfm_artists}
@@ -404,6 +477,10 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
     lastfm_artist_words_dict = {idx: set(row['artist'].split()) for idx, row in df_lastfm.iterrows()}
     lastfm_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_lastfm.iterrows()}
 
+    # Pre-compute Spotify artist and title word sets
+    spot_artist_words_dict = {idx: set(row['top_artist'].split()) for idx, row in df_spot.iterrows()}
+    spot_title_words_dict = {idx: set(row['song_name'].split()) for idx, row in df_spot.iterrows()}
+
     # Create artist+first letter of title index
     artist_title_first = {}
     for idx, row in df_lastfm.iterrows():
@@ -420,6 +497,10 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
         artist = row['top_artist']
         song_name = row['song_name']
         match_found = False
+
+        # Get pre-computed word sets for this Spotify track
+        spot_artist_words = spot_artist_words_dict[index]
+        spot_title_words = spot_title_words_dict[index]
 
         best_match_performer = None
         best_match_title = None
@@ -465,16 +546,13 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                 if title[0] != song_name[0]:
                     continue
 
-                spot_artist_words = set(artist.split())
                 curr_artist_words = lastfm_artist_words_dict[i]
                 if not spot_artist_words.intersection(curr_artist_words):
                     continue 
 
-                spot_title_words = set(song_name.split())
                 curr_title_words = lastfm_title_words_dict[i]
                 if not spot_title_words.intersection(curr_title_words):
                     continue 
-
 
                 artist_score = fuzz.QRatio(artist, curr_artist)
                 if artist_score < 50:
@@ -492,6 +570,8 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                     best_match_name_match_pct = title_score
                     best_match_lastfm_index = i
 
+                # Need slightly higher threshold for lastfm
+                # Has a few cover bands that foul things up
                 if geo_mean_score >= 75:
                     match_found = True
 
@@ -519,12 +599,10 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                     if title[0] != song_name[0]:
                         continue
 
-                    spot_artist_words = set(artist.split())
                     curr_artist_words = lastfm_artist_words_dict[i]
                     if not spot_artist_words.intersection(curr_artist_words):
                         continue 
 
-                    spot_title_words = set(song_name.split())
                     curr_title_words = lastfm_title_words_dict[i]
                     if not spot_title_words.intersection(curr_title_words):
                         continue 
@@ -556,7 +634,6 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                         df_lastfm.at[lastfm_index, 'has_spot_match'] = True
                         df_lastfm.at[lastfm_index, 'spot_match_index'] = index
 
-
                         append_match_result(results, artist, song_name, curr_artist, title, 
                                             match_found, best_match_lastfm_index, index, best_match_score,
                                             best_match_artist_match_pct, best_match_name_match_pct)
@@ -575,12 +652,10 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                 if title[0] != song_name[0]:
                     continue
 
-                spot_artist_words = set(artist.split())
                 curr_artist_words = lastfm_artist_words_dict[i]
                 if not spot_artist_words.intersection(curr_artist_words):
                     continue 
 
-                spot_title_words = set(song_name.split())
                 curr_title_words = lastfm_title_words_dict[i]
                 if not spot_title_words.intersection(curr_title_words):
                     continue 
@@ -609,7 +684,6 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                     df_lastfm.at[lastfm_index, 'has_spot_match'] = True
                     df_lastfm.at[lastfm_index, 'spot_match_index'] = index
 
-
                     append_match_result(results, artist, song_name, curr_artist, title, 
                                         match_found, best_match_lastfm_index, index, best_match_score,
                                         best_match_artist_match_pct, best_match_name_match_pct)
@@ -620,14 +694,12 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                                 match_found, best_match_lastfm_index, index, best_match_score,
                                 best_match_artist_match_pct, best_match_name_match_pct)
 
-    
+    # After all matches are found,
+    # Overwrite group6_id in lastfm set based on findings
     for index, row in df_spot.iterrows():
         if df_spot.at[index, 'has_lastfm_match']:
             lastfm_index = df_spot.at[index, 'lastfm_match_index']
-            if df_lastfm.at[lastfm_index, 'exact_match']:
-                continue
-            else:
-                df_lastfm.at[lastfm_index, 'group6_id'] = df_spot.at[index, 'group6_id']
+            df_lastfm.at[lastfm_index, 'group6_id'] = df_spot.at[index, 'group6_id']
 
 
     end_time = time.time()
@@ -649,7 +721,8 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
 
     return df_spot, df_lastfm
 
-
+# LastFM is already tied to AcousticBrainz via mbid
+# So this just updates group6_id in AcousticBrainz
 def lastfm_to_ab(df_lastfm, df_ab):
     start_time = time.time()
     
@@ -681,48 +754,51 @@ def update_db_after_matching(df_kag, df_lastfm, df_ab):
     conn = pg_hook.get_conn()
     
     with conn.cursor() as cur:
-        # Delete existing data for Kaggle set ONLY
-        cur.execute("DELETE FROM billboard_chart_data")
-        deleted_count = cur.rowcount
-        print(f"Deleted {deleted_count} rows from billboard_chart_data")
-        
-        # Reinsert with new group6_id values
-        insert_count = 0
+        # Update Billboard records rather than delete and reinsert
+        # This preserves all original records while updating group6_id where needed
+        kag_updates = 0
         for idx, row in df_kag.iterrows():
-            cur.execute("""
-                INSERT INTO billboard_chart_data 
-                (group6_id, top_artist, artists, song_name, peak_chart_pos,
-                last_chart_pos, total_wks_on_chart, wk_first_charted, wk_last_charted) 
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                row['group6_id'],
-                row['top_artist'],
-                row['artists'], 
-                row['song_name'],
-                row['peak_chart_pos'],
-                row['last_chart_pos'],
-                row['total_wks_on_chart'],
-                row['wk_first_charted'],
-                row['wk_last_charted']
-            ))
-            insert_count += 1
+            if pd.notna(row['group6_id']):
+                # Create a deterministic ID based on song name and artist (same as insertion logic)
+                original_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['top_artist'].strip())))
+                
+                # Only update if the ID has changed
+                if original_id != row['group6_id']:
+                    cur.execute("""
+                        UPDATE billboard_chart_data 
+                        SET group6_id = %s
+                        WHERE song_name = %s AND top_artist = %s
+                    """, (
+                        row['group6_id'],
+                        row['song_name'],
+                        row['top_artist']
+                    ))
+                    kag_updates += cur.rowcount
         
-        print(f"Reinserted {insert_count} rows into billboard_chart_data")
+        print(f"Updated {kag_updates} rows in billboard_chart_data")
     
-    # Update LastFM - only need to update group6_id where mbid matches
+    # Update LastFM tracks
     lastfm_updates = 0
     with conn.cursor() as cur:
         for idx, row in df_lastfm.iterrows():
-            if pd.notna(row['mbid']) and pd.notna(row['group6_id']):
-                cur.execute(
-                    "UPDATE lastfm_tracks SET group6_id = %s WHERE mbid = %s",
-                    (row['group6_id'], row['mbid'])
-                )
+            if pd.notna(row['group6_id']):
+                # If there's an mbid, use that as the primary key for updates
+                if pd.notna(row['mbid']):
+                    cur.execute(
+                        "UPDATE lastfm_tracks SET group6_id = %s WHERE mbid = %s",
+                        (row['group6_id'], row['mbid'])
+                    )
+                else:
+                    # Otherwise, use artist and song_name
+                    cur.execute(
+                        "UPDATE lastfm_tracks SET group6_id = %s WHERE song_name = %s AND artist = %s",
+                        (row['group6_id'], row['song_name'], row['artist'])
+                    )
                 lastfm_updates += cur.rowcount
         
         print(f"Updated {lastfm_updates} rows in lastfm_tracks")
     
-    # Update AcousticBrainz - only need to update group6_id where mbid matches
+    # Update AcousticBrainz - only update group6_id where mbid matches
     ab_updates = 0
     with conn.cursor() as cur:
         for idx, row in df_ab.iterrows():
@@ -753,7 +829,6 @@ def match_all_tracks():
 
 
 
-
     
 with DAG(
         'matching_dag',
@@ -769,7 +844,6 @@ with DAG(
         task_id='match_all_tracks',
         python_callable=match_all_tracks
     )
-
 
     end_task = EmptyOperator(task_id='end')
     

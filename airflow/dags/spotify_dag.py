@@ -67,7 +67,7 @@ def get_spot_tracks():
     # Need to do query to get the playlist ID, Spotify seems to rotate playlist IDs
     playlist_queries = [
         "Billboard Hot 100: All #1 hit songs 1958-2024",
-        "Top 1000 greatest songs of all time",
+        "Most well known songs ever",
         "100 Greatest Rock Songs",
         "Top 100 hip hop hits of all time",
         "100 Greatest Pop Songs",
@@ -79,7 +79,8 @@ def get_spot_tracks():
         "Top hits of the 2000s",
         "90s hits top 100 songs",
         "Top hits of the 2010s",
-        "80s hits top 100 songs"
+        "80s hits top 100 songs",
+        "70s hits top 100 songs"
     ]
 
     # Dictionary to store playlist information
