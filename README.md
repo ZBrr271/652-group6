@@ -12,7 +12,6 @@
 # Make sure your jhu_docker is off before you run the commands
 
 # Recommended dag sequence - kaggle_dag, spotify_dag, and lasfm_brainz_dag in any order
-# Then you can optionally run the matching_dag, but it's slow
 
 A containerized data pipeline using Apache Airflow, PostgreSQL, and a Flask API. Currently configured to collect music data from LastFM's API.
 

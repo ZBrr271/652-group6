@@ -1,11 +1,11 @@
 {
-    "LASTFM_API_KEY":"785f1b57835250d3bec5b0c2682b32aa",
+    "LASTFM_API_KEY":"PUT YOUR LAST FM API KEY HERE",
     "LASTFM_BASE_URL":"http://ws.audioscrobbler.com/2.0/",
-    "LASTFM_USER_AGENT": "JHU-Project/1.0 (zbarret1@jh.edu)",
-    "KAG_USERNAME":"zmbarrett",
-    "KAG_KEY":"eca1fde2463f087bbeea1ee3b57d4400",
-    "SPOTIFY_CLIENT_ID":"d2d5bf12b79f4947be8568a2a4105a93",
-    "SPOTIFY_CLIENT_SECRET":"61ec80164ca14449a0588e4e64330fda",
+    "LASTFM_USER_AGENT": "JHU-Project/1.0 (PUT YOUR EMAIL HERE)",
+    "KAG_USERNAME":"PUT YOUR KAGGLE USERNAME HERE",
+    "KAG_KEY":"PUT YOUR KAGGLE API KEY HERE",
+    "SPOTIFY_CLIENT_ID":"PUT YOUR SPOTIFY CLIENT ID HERE",
+    "SPOTIFY_CLIENT_SECRET":"PUT YOUR SPOTIFY CLIENT SECRET HERE",
     "AB_BASE_URL":"https://acousticbrainz.org",
     "MB_BASE_URL":"https://musicbrainz.org/ws/2"
 }

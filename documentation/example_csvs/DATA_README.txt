@@ -12,13 +12,6 @@ Description of data files:
 
 "acousticbrainz_features_XX.csv" - The acousticbrainz track data - from "lastfm_brainz_dag"
 
-"spottokaggle_match_results_XX.csv" - Looks for matches from spot tracks to billboard data by top artist and song name beyond a perfect match - from "matching_dag"
-Some matches may be missed but thresholds are selected to make sure not to pick up any non-matches. Match percentages below a certain threshold are not even shown
-
-"spottolastfm_match_results_XX.csv" - Looks for matches from spot tracks to last.fm tracks by top artist and song name beyond a perfect match - from "matching_dag"
-Some matches may be missed but thresholds are selected to make sure not to pick up any non-matches. Match percentages below a certain threshold are not even shown
-
-
 
 
 Example pgAdmin query to see combined data from tables
