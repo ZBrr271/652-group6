@@ -1,10 +1,3 @@
-# 685.652, Spring 2025 - Group 6 Final Project
-# lastfm_brainz_dag.py
-
-# This DAG gets lastfm and acousticbrainz data
-# Cleans and transforms it
-# Then loads it into postgres
-
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.postgres.operators.postgres import PostgresOperator
@@ -17,6 +10,8 @@ import time
 import json
 from datetime import datetime, timedelta
 import os
+import numpy as np
+import unicodedata
 import uuid
 
 
@@ -34,12 +29,10 @@ user_agent = Variable.get("LASTFM_USER_AGENT")
 api_key = Variable.get("LASTFM_API_KEY")
 base_url = Variable.get("LASTFM_BASE_URL")
 
-MAX_TAGS = 20
-TRACKS_PER_TAG = 250
+MAX_TAGS = 50
+TRACKS_PER_TAG = 100
 HEADERS = {"User-Agent": user_agent}
 
-
-# Gets last.fm top tags from tag.getTopTags endpoint
 def get_top_tags():
     print(f"Getting top {MAX_TAGS} tags from LastFM")
     
@@ -50,7 +43,7 @@ def get_top_tags():
     params = {
         "method": "tag.getTopTags",
         "api_key": api_key,
-        "format": "json"
+        "format": "json",
     }
 
     # Call lastfm api
@@ -68,7 +61,6 @@ def get_top_tags():
     print("Saved tags to database")
     return
 
-
 # Gets basic track info from tag.getTopTracks endpoint
 def get_track_basics():
     print(f"Getting basics for {TRACKS_PER_TAG} tracks for each tag")
@@ -79,6 +71,8 @@ def get_track_basics():
 
     # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
+
+
 
     # Get top tags from db
     with pg_hook.get_conn() as conn:
@@ -119,8 +113,6 @@ def get_track_basics():
 
             tag_tracks.extend(tracks)
             page += 1
-
-        # Truncate as needed
         tag_tracks = tag_tracks[:TRACKS_PER_TAG]
         all_tracks_initial.extend(tag_tracks)
     
@@ -155,7 +147,7 @@ def get_track_basics():
 
     return df_lastfm_initial
 
-# Get detailed last.fm track info from track.getInfo endpoint
+# Gets detailed track info from track.getInfo endpoint
 def get_track_details(df_initial):
     request_count = 0
     all_tracks_details = []
@@ -192,10 +184,9 @@ def get_track_details(df_initial):
 
     return all_tracks_details
 
-# Clean and transform last.fm tracks
+
 def process_lastfm_tracks(all_tracks_details):
     print("Processing last.fm tracks...")
-
     lastfm_tracks = []
     for track in all_tracks_details:
         track_details = {}
@@ -261,6 +252,7 @@ def get_and_load_lastfm_tracks():
     # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
     
+
     # Write data to postgres
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
@@ -268,22 +260,22 @@ def get_and_load_lastfm_tracks():
 
                 # Generate group6_id
                 group6_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['artist'].strip())))
-                
-                # Insert into the table
-                cur.execute("""INSERT INTO lastfm_tracks (group6_id, artist, song_name, duration, listeners, 
-                            playcount, mbid, album_name, url, tag_ranks, toptags, wiki_summary) 
+
+                cur.execute("""INSERT INTO lastfm_tracks (mbid, group6_id, artist, song_name, duration, listeners, 
+                            playcount, album_name, url, tag_ranks, toptags, wiki_summary) 
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                             ON CONFLICT DO NOTHING""", 
-                            (group6_id,
+                            (row['mbid'], group6_id,
                              row['artist'], row['song_name'], row['duration'], row['listeners'], 
-                             row['playcount'], row['mbid'], row['album_name'], row['url'], 
+                             row['playcount'], row['album_name'], row['url'], 
                              row['tag_ranks'], row['toptags'], row['wiki_summary']))
             conn.commit()
             print(f"Saved {len(df_lastfm_tracks)} tracks to postgres")
 
-    return
+    return    
 
-# Get acousticbrainz features
+
+# Gets acousticbrainz features
 # For all tracks with mbids currently in the lastfm_tracks table
 def get_ab_features():
     print("Getting acousticbrainz features")
@@ -295,7 +287,7 @@ def get_ab_features():
     # Get postgres connection
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
 
-
+    # Get all mbid from lastfm_tracks
     with pg_hook.get_conn() as conn:
         with conn.cursor() as cur:
             # Select both mbid and group6_id
@@ -308,80 +300,170 @@ def get_ab_features():
             # List of just mbids for the API calls
             mbid_list = list(mbid_to_group6id.keys())
 
-            batch_size = 25
-            print('Starting to get features for', len(mbid_list), f'tracks using batch_size = {batch_size}')
+    batch_size = 25
+    print('Starting to get features for', len(mbid_list), f'tracks using batch_size = {batch_size}')
 
-            # Get features for each batch of mbid
-            for i in range(0, len(mbid_list), batch_size):
-                batch = mbid_list[i:i + batch_size]
-                params = {
-                    'recording_ids': ';'.join(batch),
-                }
-                response = requests.get(endpoint, params=params, headers=HEADERS)
+    results = []
 
-                # Write batch to postgres
-                for mbid, data in response.json().items():
-                    if mbid not in batch:
-                        continue
-                    
-                    # Look up the group6_id for this mbid
-                    group6_id = mbid_to_group6id.get(mbid)
-                    if not group6_id:
-                        print(f"Warning: No group6_id found for mbid {mbid}")
-                        continue
-                        
-                    features = {
-                        'mbid': mbid,
-                        'group6_id': group6_id,  # Add the group6_id
-                        'isrcs': data['0']['metadata'].get('tags', {}).get('isrc', []),
-                        'danceability': data['0']['highlevel'].get('danceability', {}).get('all', {}).get('danceable', None),
-                        'genre_alternative': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('alternative',None),
-                        'genre_blues': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('blues',None),
-                        'genre_electronic': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('electronic',None),
-                        'genre_folkcountry': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('folkcountry',None),
-                        'genre_funksoulrnb': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('funksoulrnb',None),
-                        'genre_jazz': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('jazz',None),
-                        'genre_pop': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('pop',None),
-                        'genre_raphiphop': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('raphiphop',None),
-                        'genre_rock': data['0']['highlevel'].get('genre_dortmund', {}).get('all', {}).get('rock',None),
-                        'mood_happy': data['0']['highlevel'].get('mood_happy', {}).get('all', {}).get('happy', None),
-                        'mood_party': data['0']['highlevel'].get('mood_party', {}).get('all', {}).get('party', None),
-                        'mood_relaxed': data['0']['highlevel'].get('mood_relaxed', {}).get('all', {}).get('relaxed', None),
-                        'mood_sad': data['0']['highlevel'].get('mood_sad', {}).get('all', {}).get('sad', None),
-                        'metadata': data['0']['metadata']['tags']
-                    }
+    # Get features for each batch of mbid
+    for i in range(0, len(mbid_list), batch_size):
+        batch = mbid_list[i:i + batch_size]
+        params = {'recording_ids': ';'.join(batch)}
+        
+        response = requests.get(endpoint, params=params, headers=HEADERS)
+        response.raise_for_status()  # Raise exception for HTTP errors
+        
+        response_data = response.json()
+        
+        # Process each mbid in the response
+        for mbid, data in response_data.items():
+            if mbid not in batch or '0' not in data:
+                continue
 
-                    # Insert into the table
-                    cur.execute("""INSERT INTO acousticbrainz_features (mbid, group6_id, isrcs, danceability, genre_alternative, genre_blues, 
-                                                                        genre_electronic, genre_folkcountry, genre_funksoulrnb, genre_jazz, 
-                                                                        genre_pop, genre_raphiphop, genre_rock, mood_happy, mood_party, 
-                                                                        mood_relaxed, mood_sad, metadata) 
-                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
-                                (features['mbid'],
-                                features['group6_id'],
-                                features['isrcs'], 
-                                features['danceability'], 
-                                features['genre_alternative'], 
-                                features['genre_blues'], 
-                                features['genre_electronic'], 
-                                features['genre_folkcountry'], 
-                                features['genre_funksoulrnb'], 
-                                features['genre_jazz'], 
-                                features['genre_pop'], 
-                                features['genre_raphiphop'], 
-                                features['genre_rock'], 
-                                features['mood_happy'], 
-                                features['mood_party'], 
-                                features['mood_relaxed'], 
-                                features['mood_sad'], 
-                                json.dumps(features['metadata'])))
-                
-                conn.commit()
-                
-                print('Batch', i // batch_size + 1, 'of', len(mbid_list) // batch_size, 'complete')
-                time.sleep(0.2)
+            group6_id = mbid_to_group6id.get(mbid)
+            if not group6_id:
+                print(f"Warning: No group6_id found for mbid: {mbid}")
+                continue
             
-    return
+            metadata = data['0']['metadata']
+            tags = metadata.get('tags', {})
+            highlevel = data['0']['highlevel']
+            
+            # Simple, direct field extraction
+            features = {
+                'mbid': mbid,
+                'group6_id': group6_id,
+                'artist': json.dumps(tags.get('artist', None)),
+                'song_name': json.dumps(tags.get('title', None)),
+                'album': json.dumps(tags.get('album', None)),
+                'date': json.dumps(tags.get('date', None)),
+                'isrcs': json.dumps(tags.get('isrc', None)),
+                'bpm': json.dumps(tags.get('bpm', None)),
+                'initialkey': tags.get('initialkey', None),
+                'musicbrainz_albumid': tags.get('musicbrainz_albumid', None),
+                'musicbrainz_artistid': tags.get('musicbrainz_artistid', None),
+                'mood': json.dumps(tags.get('mood', None)),
+                
+                'danceability_danceable': highlevel.get('danceability', {}).get('all', {}).get('danceable', None),
+                'danceability_not_danceable': highlevel.get('danceability', {}).get('all', {}).get('not_danceable', None),
+                'danceability_max_class': highlevel.get('danceability', {}).get('value', None),
+                
+                'gender_female': highlevel.get('gender', {}).get('all', {}).get('female', None),
+                'gender_male': highlevel.get('gender', {}).get('all', {}).get('male', None),
+                'gender_max_class': highlevel.get('gender', {}).get('value', None),
+                
+                'genre_alternative': highlevel.get('genre_dortmund', {}).get('all', {}).get('alternative', None),
+                'genre_blues': highlevel.get('genre_dortmund', {}).get('all', {}).get('blues', None),
+                'genre_electronic': highlevel.get('genre_dortmund', {}).get('all', {}).get('electronic', None),
+                'genre_folkcountry': highlevel.get('genre_dortmund', {}).get('all', {}).get('folkcountry', None),
+                'genre_funksoulrnb': highlevel.get('genre_dortmund', {}).get('all', {}).get('funksoulrnb', None),
+                'genre_jazz': highlevel.get('genre_dortmund', {}).get('all', {}).get('jazz', None),
+                'genre_pop': highlevel.get('genre_dortmund', {}).get('all', {}).get('pop', None),
+                'genre_raphiphop': highlevel.get('genre_dortmund', {}).get('all', {}).get('raphiphop', None),
+                'genre_rock': highlevel.get('genre_dortmund', {}).get('all', {}).get('rock', None),
+                'genre_dortmund_max_class': highlevel.get('genre_dortmund', {}).get('value', None),
+                
+                'voice_instrumental_instrumental': highlevel.get('voice_instrumental', {}).get('all', {}).get('instrumental', None),
+                'voice_instrumental_voice': highlevel.get('voice_instrumental', {}).get('all', {}).get('voice', None),
+                'voice_instrumental_max_class': highlevel.get('voice_instrumental', {}).get('value', None),
+                'genre': json.dumps(tags.get('genre', None))
+            }
+            
+
+            results.append(features)
+        
+
+        print('Batch', i // batch_size + 1, 'of', (len(mbid_list) - 1) // batch_size + 1, 'complete')
+        time.sleep(0.2)
+    
+    if results:
+        results_df = pd.DataFrame(results)
+        
+        results_df.replace('', None, inplace=True)
+
+        # Convert empty strings to None for all numeric fields
+        numeric_fields = ['danceability_danceable', 'danceability_not_danceable', 
+                        'gender_female', 'gender_male', 
+                        'genre_alternative', 'genre_blues', 'genre_electronic', 
+                        'genre_folkcountry', 'genre_funksoulrnb', 'genre_jazz', 
+                        'genre_pop', 'genre_raphiphop', 'genre_rock',
+                        'voice_instrumental_instrumental', 'voice_instrumental_voice']
+        
+        # Convert numeric fields that need to be floats
+        for field in numeric_fields:
+            if field in results_df.columns:
+                results_df[field] = pd.to_numeric(results_df[field], errors='coerce')
+                
+        # Replace NaN with None
+        results_df = results_df.where(pd.notnull(results_df), None)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        data_dir = os.path.join(os.getcwd(), 'data')
+        filename = f"acousticbrainz_features_{timestamp}.csv"
+        file_path = os.path.join(data_dir, filename)
+        results_df.to_csv(file_path, index=False, encoding='utf-8-sig')
+        print(f"Saved {len(results_df)} records to {filename}")
+    else:
+        print("No features were retrieved")
+
+
+    # Now open a new database connection to insert the data
+    with pg_hook.get_conn() as conn:
+        with conn.cursor() as cur:
+            for track in results:
+
+                if 'bpm' in track and (track['bpm'] == '' or track['bpm'] == []):
+                    track['bpm'] = None
+                
+                # Directly replace all empty strings in all features
+                for key in track:
+                    if track[key] == '':
+                        track[key] = None
+                
+                cur.execute("""INSERT INTO acousticbrainz_features 
+                            (mbid, group6_id, artist, song_name, album, date, isrcs,
+                            bpm, initialkey, musicbrainz_albumid, musicbrainz_artistid, mood,
+                            danceability_danceable, danceability_not_danceable, danceability_max_class,
+                            gender_female, gender_male, gender_max_class,
+                            genre_alternative, genre_blues, genre_electronic, genre_folkcountry, genre_funksoulrnb,
+                            genre_jazz, genre_pop, genre_raphiphop, genre_rock, genre_dortmund_maxclass,
+                            voice_instrumental_instrumental, voice_instrumental_voice, voice_instrumental_max_class, genre) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
+                            (track['mbid'], 
+                            track['group6_id'],
+                            track['artist'], 
+                            track['song_name'], 
+                            track['album'], 
+                            track['date'], 
+                            track['isrcs'], 
+                            track['bpm'], 
+                            track['initialkey'], 
+                            track['musicbrainz_albumid'], 
+                            track['musicbrainz_artistid'], 
+                            track['mood'], 
+                            track['danceability_danceable'], 
+                            track['danceability_not_danceable'], 
+                            track['danceability_max_class'], 
+                            track['gender_female'], 
+                            track['gender_male'], 
+                            track['gender_max_class'], 
+                            track['genre_alternative'], 
+                            track['genre_blues'], 
+                            track['genre_electronic'], 
+                            track['genre_folkcountry'], 
+                            track['genre_funksoulrnb'], 
+                            track['genre_jazz'], 
+                            track['genre_pop'], 
+                            track['genre_raphiphop'], 
+                            track['genre_rock'], 
+                            track['genre_dortmund_max_class'], 
+                            track['voice_instrumental_instrumental'], 
+                            track['voice_instrumental_voice'], 
+                            track['voice_instrumental_max_class'],
+                            track['genre']))
+                conn.commit()
+            print(f"Inserted {len(results)} tracks into database")
 
 
 with DAG(
@@ -397,7 +479,7 @@ with DAG(
     create_tables = PostgresOperator(
         task_id='create_tables',
         postgres_conn_id='pg_group6',
-        sql='sql/lastfm_brainz_create.sql'
+        sql='sql/lastfm_brainz_create_z.sql'
     )
 
     load_top_tags = PythonOperator(

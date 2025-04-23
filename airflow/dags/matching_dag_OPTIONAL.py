@@ -393,12 +393,14 @@ def match_spot_to_kag(df_spot, df_kag):
                                 best_match_artist_match_pct, best_match_name_match_pct)
 
     # After all matches are found,
-    # Update the original dataframe with the match information
+    # Update the original dataframe with the match information, but preserve existing matches
     for index, row in df_spot.iterrows():
         if row['has_kag_match'] and pd.notna(row['kag_match_index']):
             original_kag_index = int(row['kag_match_index'])
             if 0 <= original_kag_index < len(df_kag):  # Validate index
-                df_kag.at[original_kag_index, 'group6_id'] = row['group6_id']
+                # Only update if the group6_ids are different
+                if df_kag.at[original_kag_index, 'group6_id'] != row['group6_id']:
+                    df_kag.at[original_kag_index, 'group6_id'] = row['group6_id']
     
     end_time = time.time()
     elapsed_time = end_time - start_time
@@ -430,22 +432,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
 
     start_time = time.time()
 
-    # Check for exact matches first based on UUID algorithm
-    # This ensures we don't lose exact matches that already exist
-    exact_match_count = 0
-    for idx_spot, row_spot in df_spot.iterrows():
-        spot_id = row_spot['group6_id']
-        # Look for exact UUID matches in lastfm
-        for idx_lastfm, row_lastfm in df_lastfm.iterrows():
-            lastfm_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row_lastfm['song_name'].strip() + row_lastfm['artist'].strip())))
-            if spot_id == lastfm_id:
-                # This is an exact match based on UUID calculation
-                df_lastfm.at[idx_lastfm, 'group6_id'] = spot_id
-                exact_match_count += 1
-    
-    print(f"Found {exact_match_count} exact UUID matches between Spotify and LastFM")
-
-    # Continue with fuzzy matching for the rest
+    # Initialize tracking columns
     df_lastfm['has_spot_match'] = False
     df_lastfm['spot_match_index'] = None
     df_lastfm['exact_match'] = False
@@ -490,10 +477,12 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                 artist_title_first[key] = []
             artist_title_first[key].append(idx)
 
+    # Process each Spotify track
     for index, row in df_spot.iterrows():
+        # Skip if already has a match
         if df_spot.at[index, 'has_lastfm_match']:
             continue
-
+        
         artist = row['top_artist']
         song_name = row['song_name']
         match_found = False
@@ -515,6 +504,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
         if artist in lastfm_artists:
             curr_artist = artist
             
+            # Check for exact artist+title match first
             if song_name in artist_to_titles.get(curr_artist, set()):
                 lastfm_index = lastfm_artist_title_to_index.get((curr_artist, song_name))
                 best_match_lastfm_index = lastfm_index
@@ -695,12 +685,13 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
                                 best_match_artist_match_pct, best_match_name_match_pct)
 
     # After all matches are found,
-    # Overwrite group6_id in lastfm set based on findings
+    # Overwrite group6_id in lastfm set based on findings, but preserve existing matches
     for index, row in df_spot.iterrows():
         if df_spot.at[index, 'has_lastfm_match']:
             lastfm_index = df_spot.at[index, 'lastfm_match_index']
-            df_lastfm.at[lastfm_index, 'group6_id'] = df_spot.at[index, 'group6_id']
-
+            # Only update if the group6_ids are different
+            if df_lastfm.at[lastfm_index, 'group6_id'] != row['group6_id']:
+                df_lastfm.at[lastfm_index, 'group6_id'] = df_spot.at[index, 'group6_id']
 
     end_time = time.time()
     elapsed_time = end_time - start_time
@@ -754,26 +745,21 @@ def update_db_after_matching(df_kag, df_lastfm, df_ab):
     conn = pg_hook.get_conn()
     
     with conn.cursor() as cur:
-        # Update Billboard records rather than delete and reinsert
-        # This preserves all original records while updating group6_id where needed
+        # Update Billboard records based on matches found
         kag_updates = 0
         for idx, row in df_kag.iterrows():
-            if pd.notna(row['group6_id']):
-                # Create a deterministic ID based on song name and artist (same as insertion logic)
-                original_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, str(row['song_name'].strip() + row['top_artist'].strip())))
-                
-                # Only update if the ID has changed
-                if original_id != row['group6_id']:
-                    cur.execute("""
-                        UPDATE billboard_chart_data 
-                        SET group6_id = %s
-                        WHERE song_name = %s AND top_artist = %s
-                    """, (
-                        row['group6_id'],
-                        row['song_name'],
-                        row['top_artist']
-                    ))
-                    kag_updates += cur.rowcount
+            # Only update records that were explicitly matched in the matching process
+            if 'has_spot_match' in df_kag.columns and row['has_spot_match']:
+                cur.execute("""
+                    UPDATE billboard_chart_data 
+                    SET group6_id = %s
+                    WHERE song_name = %s AND top_artist = %s
+                """, (
+                    row['group6_id'],
+                    row['song_name'],
+                    row['top_artist']
+                ))
+                kag_updates += cur.rowcount
         
         print(f"Updated {kag_updates} rows in billboard_chart_data")
     
@@ -781,28 +767,23 @@ def update_db_after_matching(df_kag, df_lastfm, df_ab):
     lastfm_updates = 0
     with conn.cursor() as cur:
         for idx, row in df_lastfm.iterrows():
-            if pd.notna(row['group6_id']):
-                # If there's an mbid, use that as the primary key for updates
-                if pd.notna(row['mbid']):
-                    cur.execute(
-                        "UPDATE lastfm_tracks SET group6_id = %s WHERE mbid = %s",
-                        (row['group6_id'], row['mbid'])
-                    )
-                else:
-                    # Otherwise, use artist and song_name
-                    cur.execute(
-                        "UPDATE lastfm_tracks SET group6_id = %s WHERE song_name = %s AND artist = %s",
-                        (row['group6_id'], row['song_name'], row['artist'])
-                    )
+            # Only update records that were explicitly matched
+            if 'has_spot_match' in df_lastfm.columns and row['has_spot_match']:
+                # Use mbid as the primary key for updates - LastFM tracks always have an mbid
+                cur.execute(
+                    "UPDATE lastfm_tracks SET group6_id = %s WHERE mbid = %s",
+                    (row['group6_id'], row['mbid'])
+                )
                 lastfm_updates += cur.rowcount
         
         print(f"Updated {lastfm_updates} rows in lastfm_tracks")
     
-    # Update AcousticBrainz - only update group6_id where mbid matches
+    # Update AcousticBrainz
     ab_updates = 0
     with conn.cursor() as cur:
         for idx, row in df_ab.iterrows():
-            if pd.notna(row['mbid']) and pd.notna(row['group6_id']):
+            # Only update records with valid mbid
+            if pd.notna(row['mbid']):
                 cur.execute(
                     "UPDATE acousticbrainz_features SET group6_id = %s WHERE mbid = %s",
                     (row['group6_id'], row['mbid'])
