@@ -90,6 +90,11 @@ def match_spot_to_kag(df_spot, df_kag):
     # Store the original dataframe before filtering
     df_kag_original = df_kag.copy()
 
+    # Initialize match flags in the original dataframe
+    df_kag['has_spot_match'] = False
+    df_kag['spot_match_index'] = None
+    df_kag['exact_match'] = False
+
     # To decrease matching time, filter out songs
     # That didn't reach a certain chart position
     # Because fuzzy string matching is slow
@@ -401,12 +406,26 @@ def match_spot_to_kag(df_spot, df_kag):
                 # Only update if the group6_ids are different
                 if df_kag.at[original_kag_index, 'group6_id'] != row['group6_id']:
                     df_kag.at[original_kag_index, 'group6_id'] = row['group6_id']
+                
+                # Transfer match flags to original dataframe
+                df_kag.at[original_kag_index, 'has_spot_match'] = True
+                df_kag.at[original_kag_index, 'spot_match_index'] = index
+                
+                # Find the corresponding filtered index to check for exact match flag
+                filtered_indices = df_kag_filtered[df_kag_filtered['index'] == original_kag_index].index
+                if len(filtered_indices) > 0:
+                    filtered_idx = filtered_indices[0]
+                    df_kag.at[original_kag_index, 'exact_match'] = df_kag_filtered.at[filtered_idx, 'exact_match']
+    
+    # Count matches for logging
+    match_count = df_kag['has_spot_match'].sum()
+    exact_count = (df_kag['has_spot_match'] & df_kag['exact_match']).sum()
+    print(f"Found {match_count} total matches, including {exact_count} exact matches")
     
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"\nTotal time taken for Spotify and Kaggle matching: {elapsed_time:.2f} seconds")
     
-
     # Write to CSV for viewing results
     results_df = pd.DataFrame(results)
     results_df.sort_values(by=['best_match_score'], ascending=False, inplace=True)
@@ -432,7 +451,7 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
 
     start_time = time.time()
 
-    # Initialize tracking columns
+    # Initialize match flags
     df_lastfm['has_spot_match'] = False
     df_lastfm['spot_match_index'] = None
     df_lastfm['exact_match'] = False
@@ -692,7 +711,16 @@ def match_spot_to_lastfm(df_spot, df_lastfm):
             # Only update if the group6_ids are different
             if df_lastfm.at[lastfm_index, 'group6_id'] != row['group6_id']:
                 df_lastfm.at[lastfm_index, 'group6_id'] = df_spot.at[index, 'group6_id']
-
+            
+            # Ensure match flags are set
+            df_lastfm.at[lastfm_index, 'has_spot_match'] = True
+            df_lastfm.at[lastfm_index, 'spot_match_index'] = index
+    
+    # Count matches for logging
+    match_count = df_lastfm['has_spot_match'].sum()
+    exact_count = (df_lastfm['has_spot_match'] & df_lastfm['exact_match']).sum()
+    print(f"Found {match_count} total matches, including {exact_count} exact matches")
+    
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"\nTotal time taken for Spotify and LastFM matching: {elapsed_time:.2f} seconds")
@@ -744,58 +772,88 @@ def update_db_after_matching(df_kag, df_lastfm, df_ab):
     pg_hook = PostgresHook(postgres_conn_id='pg_group6')
     conn = pg_hook.get_conn()
     
-    with conn.cursor() as cur:
-        # Update Billboard records based on matches found
-        kag_updates = 0
-        for idx, row in df_kag.iterrows():
-            # Only update records that were explicitly matched in the matching process
-            if 'has_spot_match' in df_kag.columns and row['has_spot_match']:
-                cur.execute("""
-                    UPDATE billboard_chart_data 
-                    SET group6_id = %s
-                    WHERE song_name = %s AND top_artist = %s
-                """, (
-                    row['group6_id'],
-                    row['song_name'],
-                    row['top_artist']
-                ))
-                kag_updates += cur.rowcount
+    # Start a transaction
+    try:
+        with conn.cursor() as cur:
+            # Update Billboard records based on matches found
+            kag_updates = 0
+            for idx, row in df_kag.iterrows():
+                # Only update records that were explicitly matched
+                if row['has_spot_match']:
+                    # Check current value first
+                    cur.execute("SELECT group6_id FROM billboard_chart_data WHERE song_name = %s AND top_artist = %s", 
+                                (row['song_name'], row['top_artist']))
+                    current = cur.fetchone()
+                    
+                    # Only update if needed
+                    if current and current[0] != row['group6_id']:
+                        cur.execute("""
+                            UPDATE billboard_chart_data 
+                            SET group6_id = %s
+                            WHERE song_name = %s AND top_artist = %s
+                        """, (
+                            row['group6_id'],
+                            row['song_name'],
+                            row['top_artist']
+                        ))
+                        kag_updates += cur.rowcount
+            
+            print(f"Updated {kag_updates} rows in billboard_chart_data")
         
-        print(f"Updated {kag_updates} rows in billboard_chart_data")
-    
-    # Update LastFM tracks
-    lastfm_updates = 0
-    with conn.cursor() as cur:
-        for idx, row in df_lastfm.iterrows():
-            # Only update records that were explicitly matched
-            if 'has_spot_match' in df_lastfm.columns and row['has_spot_match']:
-                # Use mbid as the primary key for updates - LastFM tracks always have an mbid
-                cur.execute(
-                    "UPDATE lastfm_tracks SET group6_id = %s WHERE mbid = %s",
-                    (row['group6_id'], row['mbid'])
-                )
-                lastfm_updates += cur.rowcount
+            # Update LastFM tracks
+            lastfm_updates = 0
+            for idx, row in df_lastfm.iterrows():
+                # Only update records that were explicitly matched
+                if row['has_spot_match']:
+                    # Check current value first
+                    cur.execute("SELECT group6_id FROM lastfm_tracks WHERE mbid = %s", (row['mbid'],))
+                    current = cur.fetchone()
+                    
+                    # Only update if needed
+                    if current and current[0] != row['group6_id']:
+                        cur.execute(
+                            "UPDATE lastfm_tracks SET group6_id = %s WHERE mbid = %s",
+                            (row['group6_id'], row['mbid'])
+                        )
+                        lastfm_updates += cur.rowcount
+            
+            print(f"Updated {lastfm_updates} rows in lastfm_tracks")
         
-        print(f"Updated {lastfm_updates} rows in lastfm_tracks")
-    
-    # Update AcousticBrainz
-    ab_updates = 0
-    with conn.cursor() as cur:
-        for idx, row in df_ab.iterrows():
-            # Only update records with valid mbid
-            if pd.notna(row['mbid']):
-                cur.execute(
-                    "UPDATE acousticbrainz_features SET group6_id = %s WHERE mbid = %s",
-                    (row['group6_id'], row['mbid'])
-                )
-                ab_updates += cur.rowcount
+            # Update AcousticBrainz
+            ab_updates = 0
+            
+            # Create a map of mbids to group6_ids from matched LastFM tracks
+            mbid_to_group6id = {
+                row['mbid']: row['group6_id']
+                for idx, row in df_lastfm.iterrows()
+                if row['has_spot_match'] and pd.notna(row['mbid'])
+            }
+            
+            # Only update AcousticBrainz records linked to matched LastFM tracks
+            for mbid, group6_id in mbid_to_group6id.items():
+                # Check current value first
+                cur.execute("SELECT group6_id FROM acousticbrainz_features WHERE mbid = %s", (mbid,))
+                current = cur.fetchone()
+                
+                # Only update if needed
+                if current and current[0] != group6_id:
+                    cur.execute(
+                        "UPDATE acousticbrainz_features SET group6_id = %s WHERE mbid = %s",
+                        (group6_id, mbid)
+                    )
+                    ab_updates += cur.rowcount
+            
+            print(f"Updated {ab_updates} rows in acousticbrainz_features")
         
-        print(f"Updated {ab_updates} rows in acousticbrainz_features")
+        # Commit all changes
+        conn.commit()
+        print("All database updates committed")
     
-    conn.commit()
-    print("All database updates committed")
-
-
+    except Exception as e:
+        # Roll back on error
+        conn.rollback()
+        print(f"Error during database update: {e}")
+        raise
 
 def match_all_tracks():
     df_spot, df_kag, df_lastfm, df_ab = load_all_from_db()
