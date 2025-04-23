@@ -1,5 +1,5 @@
 # 685.652, Spring 2025 - Group 6 Final Project
-# matching_dag.py
+# matching_dag_OPTIONAL.py
 
 # Matches up closely related tracks
 # From different datasets
@@ -812,7 +812,7 @@ def match_all_tracks():
 
     
 with DAG(
-        'matching_dag',
+        'matching_dag_OPTIONAL',
         default_args=default_args,
         description='Dag for fuzzy matching of spotify, kaggle, lastfm, and acousticbrainz data',
         schedule_interval=None,
