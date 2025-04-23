@@ -479,7 +479,7 @@ with DAG(
     create_tables = PostgresOperator(
         task_id='create_tables',
         postgres_conn_id='pg_group6',
-        sql='sql/lastfm_brainz_create_z.sql'
+        sql='sql/lastfm_brainz_create.sql'
     )
 
     load_top_tags = PythonOperator(
