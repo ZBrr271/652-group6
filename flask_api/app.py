@@ -6,7 +6,6 @@ import datetime
 
 app = Flask(__name__)
 
-# Database connection config
 DB_CONFIG = {
     "host": "postgres",
     "dbname": "group6",
